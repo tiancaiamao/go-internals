@@ -1,0 +1,344 @@
+中文的go语言内部细节的资料几乎没有,所以自己研究了一下
+
+声明：本文内容主要来自本人对源代码的研究,以及网上找到的一些资料的整理,不保证完全正确性
+
+* 函数调用协议
+plan9编译器是"caller save"，调用者保存寄存器。被调者可以使用任何寄存器而不必保存它们。
+
+go中没有用%ebp，因为是非连续栈，stack\_base和stack_guard来标识一个栈，保存在struct G中。
+
+** go关键字
+假设调用 go func(1,2,3) ，func函数会在一个新的go线程中运行，显然新的goroutine不能和当前go线程用同一个栈，否则会相互覆盖。
+
+所以对go关键字的调用协议与普通函数调用是不同的。不像常规的C语言调用是push参数后直接call func，上面代码汇编之后会是：
+
+参数进栈
+#+begin_quote
+push func\\
+push 12\\
+call runtime.newproc\\
+pop\\
+pop\\
+#+end_quote
+
+12是参数占用的大小。在runtime.newproc中，会新建一个栈空间，将栈参数的12个字节拷贝到新栈空间并让栈指针指向参数。
+
+这时的线程状态有点像当被调度器剥夺CPU后一样，pc,sp会被存到类型于类似于进程控制块的一个结构体struct G内。func被存放在了struct G的entry域，后面进行调度时调度器会让goroutine从func开始执行。
+
+这个仅仅是一个语法糖衣而已,也就是:
+#+begin_src C
+go f(arg)
+#+end_src
+可以看作
+#+begin_src C
+runtime.newproc(size, f, argp)
+#+end_src
+
+** defer关键字
+defer关键字调用过程类似于go，不同的是call的是runtime.deferproc
+
+函数返回时，如果其中包含了defer语句，不是调用add xx SP, return
+
+而是call runtime.deferreturn，add 48 sp，return
+
+** 多值返回
+表面上看就是一个语法糖衣:\\
+go语言的
+#+begin_src C
+func f(arg1,arg2 int) (ret1,ret2 int)
+#+end_src
+转换为C语言的
+#+begin_src C
+void f(int arg1, int arg2, int *ret1, int *ret2);
+int ret1,ret2;
+f(xx,xx, &ret1, &ret2)
+#+end_src
+其实简单的这么理解也没什么影响.不过我深究了一下,很类似,但实际上不是这么干的.
+
+并不是调用者传递两个返回值的地址,被调者通过修改这两个地址所指向的值达到返回值的目的.
+
+go的实际做法是在传入的参数之上留了两个空位,被调者直接将返回值放在这两空位,相当于小小的优化了一下.
+
+以上面的f为例,go中函数调用前其内存布局是这样的:\\
+#+begin_quote
+留空位供被调函数设置ret1\\
+留空位供被调函数设置ret2\\
+arg1\\
+arg2\\
+保存函数返回地址\\
+被调者的栈...\\
+#+end_quote
+* 分段栈
+go语言中使用的是栈不是连续的。原因是需要支持goroutine。分段栈的重要意义就在于，栈空间初始分配很小的大小，然后可以随便需要自动地增长栈空间．这样在多线程环境中就可以开千千万万个线程或协程而不至于耗尽内存．
+
+ http://gcc.gnu.org/wiki/SplitStacks
+
+** 基本实现
+   ％gs寄存器存一个tcb结构的地址，go语言中是G这个结构体．这个结构中存了栈基址和stack\_guard
+
+   对于使用分段栈的函数，每次进入函数后，前几条指令就是先检测%esp跟stack\_guard比较，如果超了就要扩展栈空间
+** 扩展栈
+   所有用于分配栈空间的函数本身不能使用分段栈．引入一个属性来控制函数的生成．当然，还要保证有足够的空间来调用分配函数。编译器在编译阶段加入特殊的标识.note.GNU-split-stack，链接时对于检测到有这些标签的函数，就会插入特殊指令。扩展完之后，使用新栈之间，需要一些处理
+
+   基于原栈%esp的数据都可以直接复制到新栈中来．对于栈中存的是对象的地址，这样做不会造成问题。对于带参函数，因为参数不能直接搬，编译时要特殊处理．函数使用的参数指针不是基于栈帧的．对于在栈中返回对象的函数，对象必须返回到原栈上
+
+   扩展栈时，函数的返回地址会被修改成一个函数，这个函数会释放分配的栈块，将栈指针重新设置成调用者旧栈块的地址，栈指针等，需要在新栈空间中的某处保存着．
+** 兼容性
+   GCC中使用split栈的函数，编译split栈的函数，会加入.note.GNU-split-stack信息．链接时如果有这些东西，就会链接上split栈的相关runtime库.在gcc实现的split栈中要hack　exit函数以便最后退出时处理这些分裂栈空间．
+** go语言中的具体实现
+  go语言使用的就是分段栈，这样可以起很多个goroutine.
+  http://blog.nella.org/?p=849
+
+  这个上面讲的gcc怎么实现splitstack的，其作者正是gccgo的作者．在go语言的实现中其实思想和方法跟上面都是一致的．
+
+  进入函数后的前几条指令就是取%gs到%ecb  这时获得了结构体G的地址．这个结构体前两个域就是stackguard和stackbase
+
+  我还观察到，好象go编译的程序，没有使用%ebp，可能是因为G中已经存的栈基址的缘故.检测stackguard和%esp，如果空间不够了就会调用到runtime.morestack.这是一个汇编函数，在asm_386.s文件中可以找到
+
+  #+begin_quote
+  TEXT runtime.morestack (SB),7,$0 
+  #+end_quote
+  其中这个7就是告诉编译器这个函数不使用分段栈\\
+  runtime.morestack会把一些信息存到结构体M\\
+  DX中是frame size, AX中是arg size，这些会被保存到M结构体，还有函数返回地址，保存以后这些东西在后面会清空，然后新栈和旧栈信息可以link起来．
+
+  当morestack函数保存好需要的东西以后，它切换到调度器的栈，然后将控制器交给runtime.newstack
+
+  注意调用到runtime.newstack的方式是CALL，并且用的是调度器的栈，函数的退出有点特殊．
+
+  栈空间的分配使用的普通的go runtime的空间分配技术，也就是会垃圾回收．但也有些特殊，也不完全是直接从垃圾回收的池子中来，回来垃圾回收的池子中去．
+
+  runtime.newstack不会返回到调用者morestack.不考虑reflect相关的东西，它做的事情就是分配一块内存，在头部放一个Stktop的结构体，特殊方式退出．\\
+  清除栈时，新栈中保存的这些栈桢的信息会起作用．
+
+  退出使用的是gogocall，是调度器实现上下文切换上函数．相当于直接jump过去的而不是函数调用协议那样过去的．保存的函数返回地址被设置为一个后处理的函数，这样遇到下一次RET指令时，会jump到more.lessstack函数，这个函数做的正好是跟morestack函数相反的工作．然后就到新栈中去工作了．
+
+  再重复一遍整个过程：
+1. 使用分段栈的函数头几个指令检测%esp和stackguard，调用于runtime.morestack
+2. runtime.more函数的主要功能是保存当前的栈的一些信息．然后转换成调试器的栈了调用runtime.newstack
+3. runtime.newstack函数的主要功能是分配空间，装饰此空间，将旧的frame和arg弄到新空间
+4. 使用gogocall的方式切换到新分配的栈，gogocall使用的JMP返回到被中断的函数
+5. 继续执行遇到RET指令时会返回到runtime.less，less做的事情跟more相反，它要准备好从newstack到old　stack
+  整个过程有点像一次中断，中断处理时保存当时的现场，弄个新的栈，中断恢复时恢复到新栈中运行，运行到return时又要从runtime.less走回去
+
+* 结语
+  本文是对splitstack的一个学习，主要是gcc中分段栈的原理和go语言的具体实现方式．
+* 编译过程分析
+
+$GOROOT/src/cmd/gc目录，这里gc不是垃圾回收的意思，而是go compiler
+
+6g/8g的源文件的主函数是在lex.c
+
+从这个文件可以看到整个编译的流程。先是利用bison做了词法分析yyparse()
+
+后面就是语法分析,注释中有第一步第二步...最后生成目标文件.8或.6,相当于c的.o
+
+go.y是bison的语法定义文件
+
+事实上go在编译阶段也只是将所有的内容按语法分析的结果放入NodeList这个数据结构里，然后export写成一个*.8(比如i386的架构），这个.8的文件大概是这样子的：
+
+go object linux 386 go1 X:none
+exports automatically generated from
+hello.go in package "even"
+
+$$ // exports
+package even
+import runtime "runtime"
+type @"".T struct { @"".id int }
+func (@"".this *@"".T "noescape") Id() (? int) { return @"".this.@"".id }
+func @"".Even(@"".i int) (? bool) { return @"".i % 2 == 0 }
+func @"".odd(@"".i int) (? bool) { return @"".i % 2 == 1 }
+
+$$ // local types
+
+$$
+
+....
+
+可以自己做实验写个hello.go，运行go tool 8g hello.go
+
+具体的文件格式，可以参考src/cmd/gc/obj.c里的dumpobj函数的实现
+
+而如果我们在源文件里写一个import时，它实际上会将这个obj文件导入到当前的词法分析过程中来，比如
+
+import xxx
+
+它就是会把pkg/amd64-linux/xxx.a加载进来，接着解析这个obj文件
+
+如果我们看go.y的语法分析定义，就会看到许多hidden和there命名的定义，比如import_there, hidden_import等等，这些其实就是从obj文件来的定义。
+
+又比如我们可能会看到一些根本就不存在于源代码中的语法定义，但是它确实编译过了，这是因为在编译过程中源文件被根据需要插入一些其他的碎片进来，比如builtin的一些库或者自定义的一些lib库。
+
+理解了这些，基本上就对go的编译过程有了一个了解，事实上go的编译过程做的事情也就是把它变成obj完事，至少我们目前没有看到更多的工作。接下来想要更深入的理解，就要再看xl的实现了，这部分是将obj变成可执行代码的过程，应该会比较有趣了。
+
+---------------------------------------------------------------------------------------------
+
+* runtime中的调度器相关
+
+$GOROOT/src/pkg/runtime目录很重要，值得好好研究，源代码可以从runtime.h开始读起。
+
+goroutine实现的是自己的一套线程系统，语言级的支持，与pthread或系统级的线程无关。
+
+一些重要的结构体定义在runtime.h中。两个重要的结构体是G和M
+
+结构体G名字应该是goroutine的缩写，相当于操作系统中的进程控制块，在这里就是线程的控制结构，是对线程的抽象。
+
+其中包括
+
+goid //线程ID
+
+status//线程状态，如Gidle,Grunnable,Grunning,Gsyscall,Gwaiting,Gdead等
+
+有个常驻的寄存器extern register G* g被使用，这个是当前线程的线程控制块指针。amd64中这个寄存器是使用R15，在x86中使用0(GS)  分段寄存器
+
+结构体M名字应该是machine的缩写。是对机器的抽象，这里是可用的cpu核心。
+
+proc.c中是实现的线程调度相关。
+
+如果有自己写过操作系统的经验，看这个会比较过瘾
+
+调度器调度的时机是某线程进入系统调用，或申请内存，或由于等待管道而堵塞等
+
+------------------------------------------------------------------------------------------
+
+* 系统的初始化
+
+proc.c中有一段注释
+
+// The bootstrap sequence is:
+//
+// call osinit
+// call schedinit
+// make & queue new G
+// call runtime·mstart
+//
+// The new G calls runtime·main.
+
+这个可以在$GOROOT/src/pkg/runtime/asm_386.S中看到。go编译生成的程序应该是从这个文件开始执行的。
+
+// saved argc, argv
+...
+CALL runtime·args(SB)
+CALL runtime·osinit(SB) //这个设置cpu核心数量
+CALL runtime·schedinit(SB)
+
+// create a new goroutine to start program
+PUSHL $runtime·main(SB) // entry
+PUSHL $0 // arg size
+CALL runtime·newproc(SB) 
+POPL AX
+POPL AX
+
+// start this M
+CALL runtime·mstart(SB)
+
+还记得前面讲的go线程的调用协议么？先push参数，再push被调函数和参数字节数，接着调用runtime.newproc
+
+所以这里其实就是新开个线程执行runtime.main
+
+runtime.newproc会把runtime.main放到就绪线程队列里面。
+
+本线程继续执行runtime.mstart，m意思是machine。runtime.mstart会调用到schedule
+
+schedule函数绝不返回，它会根据当前线程队列中线程状态挑选一个来运行。
+
+然后就调度到了runtime.main函数中来，runtime.main会调用用户的main函数，即main.main从此进入用户代码
+
+总结一下函数调用流程就是
+
+runtime.osinit --> runtime.schedinit --> runtime.newproc --> runtime.mstart --> schedule --> 
+
+runtime.main --> main.main
+
+这个可以写个helloworld了用gdb调试，一步一步的跟
+
+-----------------------------------------------------------------------------------------------
+
+* interface的实现
+
+假设我们把类型分为具体类型和接口类型。
+
+具体类型例如type myint int32 或type mytype struct {...}
+
+接口类型是例如type I interface {}
+
+接口类型的值，在内存中的存放形式是两个域，一个指向真实数据(具体类型的数据)的指针，一个itab指针。
+
+具体见$GOROOT/src/pkg/reflect/value.go 的type nonEmptyInterface struct {...} 定义
+
+itab中包含了数据（具体类型的）的类型描述符信息和一个方法表
+
+方法表就类似于C++中的对象的虚函数表，上面存的全是函数指针。
+
+方法表是在接口值在初始化的时候动态生成的。具体的说：
+
+对每个具体类型，都会生成一个类型描述结构，这个类型描述结构包含了这个类型的方法列表
+
+对接口类型，同样也生成一个类型描述结构，这个类型描述结构包含了接口的方法列表
+
+接口值被初始化的时候，利用具体类型的方法表来动态生成接口值的方法表。
+
+比如说var i I = mytype的过程就是:
+
+构造一个接口类型I的值，值的第一个域是一个指针，指向mytype数据的一个副本。注意是副本而不是mytype数据本身，因为如果不这样的话改变了mytype的值，i的值也被改变。
+
+值的第二个域是指向一个动态构造出来的itab，itab的类型描述符域是存mytype的类型描述符，itab的方法表域是将mytype的类型描述符的方法表的对应函数指针拷贝过来。构造itab的代码在$ROOT/src/pkg/runtime/iface.c中的函数
+
+static Itab*  itab(InterfaceType *inter, Type *type, int32 canfail)
+
+这里还有个小细节是类型描述符的方法表是按方法名排序过的，这样itab的动态构建过程更快一些，复杂度就是O(接口类型方法表长度+具体类型方法表长度)
+
+可能有人有过疑问：编译器怎么知道某个类型是否实现了某个接口呢？这里正好解决了这个疑问：
+
+在var i I = mytype 的过程中，如果发现mytype的类型描述符中的方法表跟接口I的类型描述符中的方法表对不上，这个初始化过程就会出错，提示说mytype没有实现接口中的某某方法。
+
+再暴一个细节，所有的方法，在编译过程中都被转换成了函数
+
+比如说 func (s *mytype) Get()会被变成func Get(s *mytype)。
+
+接口值进行方法调用的时候，会找到itab中的方法表的某个函数指针，其第一个参数传的正是这个接口值的第一个域，即指向具体类型数据的指针。
+
+在具体实现上面还有一些优化过程，比如接口值的真实数据指针那个域，如果真实数据大小是32位，就不用存指针了，直接存数据本身。再有就是对类接口类型interface{}，其itab中是不需要方法表的，所以这里不是itab而直接是一个指向真实数据的类型描述结构的指针。
+
+------------------------------------------------------------------------------------------------- 
+* 垃圾回收
+
+* 调度器
+前面函数调用协议里面有说过go关键字最终被弄成了runtime.newproc.就以这个为出发点看整个调度器吧.runtime目录下的proc文件.这里有一份我加了注释的文件,放在
+
+runtime.newproc功能是创建一个新的g.这个函数不能用分段栈,真正的工作是调用newproc1完成的.newproc1的动作包括:
+#+begin_quote
+   分配一个g的结构体\
+   初始化这个结构体的一些域\
+   将g挂在就绪队列\
+   引发一次调度matchmg
+#+end_quote
+初始化newg的域时,会将调用参数保存到g的栈,将sp,pc等上下文环境保存在g的sched域,这样当这个g被分配了一个m时就可以运行了.
+
+接下来看matchmg函数.这个函数就是做个匹配,只要m没有突破上限GOMAXPROCS,就拿一个m绑定一个g.如果m的waiting队列中有就从队列中拿,否则就要新建一个m,调用runtime.newm
+
+runtime.newm功能跟newproc相似,前者分配一个goroutine,而后者是分配一个machine.调用的runtime.newosproc函数.其实一个machine就是一个操作系统线程的抽象.这个新线程会以mstart作为入口地址.当m和g绑定后,mstart会恢复g的sched域中保存的上下文环境,然后继续运行.
+
+随便扫一下runtime.newosproc还是蛮有意思的,代码在thread_linux.c文件中(平台相关的),它调用了runtime.clone(平台相关). runtime.clone是用汇编实现的,代码在sys_linux_386.s.可以看到上面有\
+INT	$0x80\
+看到这个就放心了,可以看出,go的runtime果然跟c的runtime半毛钱关系都没有啊
+
+回到runtime.newm函数继续看,它建立的线程是以runtime.mstart为入口的,那么接下来看mstart函数.
+
+mstart是runtime.newosproc新建的线程的入口地址,新线程执行时会从这里开始运行.新线程的执行和goroutine的执行是两个概念,m才是机器的抽象,是m在执行g而不是线程在执行g.所以线程的入口是mstart,而mstart中调用了schedule,这才是g真正开始有机会执行.
+
+终于到了schedule了!
+
+* 收集的一些关于go internals的链接：
+
+http://code.google.com/p/try-catch-finally/wiki/GoInternals
+
+http://research.swtch.com/gopackage
+
+http://research.swtch.com/interfaces
+
+http://research.swtch.com/goabstract 
+
+http://blog.csdn.net/hopingwhite/article/details/5782888
+
+http://www.douban.com/note/251142022/ 调度器
