@@ -1,0 +1,448 @@
+// Copyright 2009 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Memory allocator, based on tcmalloc.
+// http://goog-perftools.sourceforge.net/doc/tcmalloc.html
+
+// The main allocator works in runs of pages.
+// Small allocation sizes (up to and including 32 kB) are
+// rounded to one of about 100 size classes, each of which
+// has its own free list of objects of exactly that size.
+// Any free page of memory can be split into a set of objects
+// of one size class, which are then managed using free list
+// allocators.
+//
+// The allocator's data structures are:
+//
+//	FixAlloc: a free-list allocator for fixed-size objects,
+//		used to manage storage used by the allocator.
+//	MHeap: the malloc heap, managed at page (4096-byte) granularity.
+//	MSpan: a run of pages managed by the MHeap.
+//	MCentral: a shared free list for a given size class.
+//	MCache: a per-thread (in Go, per-M) cache for small objects.
+//	MStats: allocation statistics.
+//
+// Allocating a small object proceeds up a hierarchy of caches:
+//
+//	1. Round the size up to one of the small size classes
+//	   and look in the corresponding MCache free list.
+//	   If the list is not empty, allocate an object from it.
+//	   This can all be done without acquiring a lock.
+//
+//	2. If the MCache free list is empty, replenish it by
+//	   taking a bunch of objects from the MCentral free list.
+//	   Moving a bunch amortizes the cost of acquiring the MCentral lock.
+//
+//	3. If the MCentral free list is empty, replenish it by
+//	   allocating a run of pages from the MHeap and then
+//	   chopping that memory into a objects of the given size.
+//	   Allocating many objects amortizes the cost of locking
+//	   the heap.
+//
+//	4. If the MHeap is empty or has no page runs large enough,
+//	   allocate a new group of pages (at least 1MB) from the
+//	   operating system.  Allocating a large run of pages
+//	   amortizes the cost of talking to the operating system.
+//
+// Freeing a small object proceeds up the same hierarchy:
+//
+//	1. Look up the size class for the object and add it to
+//	   the MCache free list.
+//
+//	2. If the MCache free list is too long or the MCache has
+//	   too much memory, return some to the MCentral free lists.
+//
+//	3. If all the objects in a given span have returned to
+//	   the MCentral list, return that span to the page heap.
+//
+//	4. If the heap has too much memory, return some to the
+//	   operating system.
+//
+//	TODO(rsc): Step 4 is not implemented.
+//
+// Allocating and freeing a large object uses the page heap
+// directly, bypassing the MCache and MCentral free lists.
+//
+// The small objects on the MCache and MCentral free lists
+// may or may not be zeroed.  They are zeroed if and only if
+// the second word of the object is zero.  The spans in the
+// page heap are always zeroed.  When a span full of objects
+// is returned to the page heap, the objects that need to be
+// are zeroed first.  There are two main benefits to delaying the
+// zeroing this way:
+//
+//	1. stack frames allocated from the small object lists
+//	   can avoid zeroing altogether.
+//	2. the cost of zeroing when reusing a small object is
+//	   charged to the mutator, not the garbage collector.
+//
+// This C code was written with an eye toward translating to Go
+// in the future.  Methods have the form Type_Method(Type *t, ...).
+/* go的内存分配器是基于tcmalloc的.大约有100种内存块类别,每一类别都有自己对象的free list.小于32kB的内存分配被向上取整到对应的大小类别,从相应的free list中分配.一页内存可以被分裂成一种大小类别的对象,然后由free list分配器管理.
+
+   分配器的数据结构包括:
+   + FixAlloc: 固定大小(128kB)的对象的空闲链分配器,被分配器用于管理存储
+   + MHeap: 分配堆,按页的粒度进行管理(4kB)
+   + MSpan: 一些由MHeap管理的页
+   + MCentral: 对于给定大小类别的共享的free list
+   + MCache: 用于小对象的每M一个的cache
+   + MStats: 关于分配的统计信息
+
+   分配一个小对象(<32kB)进行的缓存层次结构:
+   1. 将小对象大小向上取整到一个对应的大小类别,查找相应的MCache的空闲链表,如果链表不空,直接从上面分配一个对象.这个过程可以不必加锁.
+   2. 如果MCache自由链是空的,通过从MCentral自由链拿一些对象进行补充.拿"一些"分摊了MCentral锁的开销
+   3. 如果MCentral自由链是空的,则通过从MHeap中拿一些页进行补充,然后将这些内存截断成规定的大小.分配一些的对象分摊了对堆加锁的开销
+   4. 如果MHeap是空的,或者没有足够大小的页了,从操作系统分配一组新的页(至少1MB).分配一大批的页分摊了从操作系统分配的开销.
+
+   释放一个小对象进行类似的层次:
+   1. 查找对象所属的大小类别,将它添加到MCache的自由链
+   2. 如果MCache自由链太长或者MCache内存大多了,则返还一些到MCentral自由链
+   3. 如果在某个范围的所有的对象都归还到MCentral链了,则将它们归还到页堆.
+   4. 如果堆的内存太多,则归还一些到操作系统(TODO:这步还没有实现)
+
+   分配和释放大的对象则直接使用页堆,跳过MCache和MCentral自由链
+
+   MCache和MCentral中自由链的小对象可能是也可能不是清0了的.当且仅当该对象的第2个字节是清0时,它是清0了的.页堆中的总是清零的.当一定范围的对象归还到页堆时,需要先清零.
+*/ 
+
+typedef struct MCentral	MCentral;
+typedef struct MHeap	MHeap;
+typedef struct MSpan	MSpan;
+typedef struct MStats	MStats;
+typedef struct MLink	MLink;
+
+enum
+{
+	PageShift	= 12,
+	PageSize	= 1<<PageShift,
+	PageMask	= PageSize - 1,
+};
+typedef	uintptr	PageID;		// address >> PageShift
+
+enum
+{
+	// Computed constant.  The definition of MaxSmallSize and the
+	// algorithm in msize.c produce some number of different allocation
+	// size classes.  NumSizeClasses is that number.  It's needed here
+	// because there are static arrays of this length; when msize runs its
+	// size choosing algorithm it double-checks that NumSizeClasses agrees.
+	NumSizeClasses = 61,
+
+	// Tunable constants.
+	MaxSmallSize = 32<<10,
+
+	FixAllocChunk = 128<<10,	// FixAllocChunk大小128K
+	MaxMCacheListLen = 256,		// MCache链的最大长度256
+	MaxMCacheSize = 2<<20,		// MCache的最大大小2M
+	MaxMHeapList = 1<<(20 - PageShift),	// MHeap中的固定大小最大页长度也是256
+	HeapAllocChunk = 1<<20,		// Chunk size for heap growth
+
+	// Number of bits in page to span calculations (4k pages).
+	// On 64-bit, we limit the arena to 16G, so 22 bits suffices.
+	// On 32-bit, we don't bother limiting anything: 20 bits for 4G.
+#ifdef _64BIT
+	MHeapMap_Bits = 22,
+#else
+	MHeapMap_Bits = 20,
+#endif
+
+	// Max number of threads to run garbage collection.
+	// 2, 3, and 4 are all plausible maximums depending
+	// on the hardware details of the machine.  The garbage
+	// collector scales well to 4 cpus.
+	MaxGcproc = 4,
+};
+
+// A generic linked list of blocks.  (Typically the block is bigger than sizeof(MLink).)
+/* 当作free list用时是用next域链起来的.
+   当作分配出去的内存时直接就是它自身
+ */
+struct MLink
+{
+	MLink *next;
+};
+
+// SysAlloc obtains a large chunk of zeroed memory from the
+// operating system, typically on the order of a hundred kilobytes
+// or a megabyte.  If the pointer argument is non-nil, the caller
+// wants a mapping there or nowhere.
+//
+// SysUnused notifies the operating system that the contents
+// of the memory region are no longer needed and can be reused
+// for other purposes.  The program reserves the right to start
+// accessing those pages in the future.
+//
+// SysFree returns it unconditionally; this is only used if
+// an out-of-memory error has been detected midway through
+// an allocation.  It is okay if SysFree is a no-op.
+//
+// SysReserve reserves address space without allocating memory.
+// If the pointer passed to it is non-nil, the caller wants the
+// reservation there, but SysReserve can still choose another
+// location if that one is unavailable.
+//
+// SysMap maps previously reserved address space for use.
+
+void*	runtime路SysAlloc(uintptr nbytes);/*分配几百K或1M*/
+void	runtime路SysFree(void *v, uintptr nbytes);
+void	runtime路SysUnused(void *v, uintptr nbytes);
+void	runtime路SysMap(void *v, uintptr nbytes);
+void*	runtime路SysReserve(void *v, uintptr nbytes);
+
+// FixAlloc is a simple free-list allocator for fixed size objects.
+// Malloc uses a FixAlloc wrapped around SysAlloc to manages its
+// MCache and MSpan objects.
+//
+// Memory returned by FixAlloc_Alloc is not zeroed.
+// The caller is responsible for locking around FixAlloc calls.
+// Callers can keep state in the object but the first word is
+// smashed by freeing and reallocating.
+struct FixAlloc
+{
+	uintptr size;
+	void *(*alloc)(uintptr);
+	void (*first)(void *arg, byte *p);	// called first time p is returned
+	void *arg;
+	MLink *list;
+	byte *chunk;
+	uint32 nchunk;
+	uintptr inuse;	// in-use bytes now
+	uintptr sys;	// bytes obtained from system
+};
+
+void	runtime路FixAlloc_Init(FixAlloc *f, uintptr size, void *(*alloc)(uintptr), void (*first)(void*, byte*), void *arg);
+void*	runtime路FixAlloc_Alloc(FixAlloc *f);
+void	runtime路FixAlloc_Free(FixAlloc *f, void *p);
+
+
+// Statistics.
+// Shared with Go: if you edit this structure, also edit extern.go.
+struct MStats
+{
+	// General statistics.
+	uint64	alloc;		// bytes allocated and still in use
+	uint64	total_alloc;	// bytes allocated (even if freed)
+	uint64	sys;		// bytes obtained from system (should be sum of xxx_sys below, no locking, approximate)
+	uint64	nlookup;	// number of pointer lookups
+	uint64	nmalloc;	// number of mallocs
+	uint64	nfree;  // number of frees
+
+	// Statistics about malloc heap.
+	// protected by mheap.Lock
+	uint64	heap_alloc;	// bytes allocated and still in use
+	uint64	heap_sys;	// bytes obtained from system
+	uint64	heap_idle;	// bytes in idle spans
+	uint64	heap_inuse;	// bytes in non-idle spans
+	uint64	heap_released;	// bytes released to the OS
+	uint64	heap_objects;	// total number of allocated objects
+
+	// Statistics about allocation of low-level fixed-size structures.
+	// Protected by FixAlloc locks.
+	uint64	stacks_inuse;	// bootstrap stacks
+	uint64	stacks_sys;
+	uint64	mspan_inuse;	// MSpan structures
+	uint64	mspan_sys;
+	uint64	mcache_inuse;	// MCache structures
+	uint64	mcache_sys;
+	uint64	buckhash_sys;	// profiling bucket hash table
+
+	// Statistics about garbage collector.
+	// Protected by stopping the world during GC.
+	uint64	next_gc;	// next GC (in heap_alloc time)
+	uint64  last_gc;	// last GC (in absolute time)
+	uint64	pause_total_ns;
+	uint64	pause_ns[256];
+	uint32	numgc;
+	bool	enablegc;
+	bool	debuggc;
+
+	// Statistics about allocation size classes.
+	struct {
+		uint32 size;
+		uint64 nmalloc;
+		uint64 nfree;
+	} by_size[NumSizeClasses];
+};
+
+#define mstats runtime路memStats	/* name shared with Go */
+extern MStats mstats;
+
+
+// Size classes.  Computed and initialized by InitSizes.
+//
+// SizeToClass(0 <= n <= MaxSmallSize) returns the size class,
+//	1 <= sizeclass < NumSizeClasses, for n.
+//	Size class 0 is reserved to mean "not small".
+//
+// class_to_size[i] = largest size in class i
+// class_to_allocnpages[i] = number of pages to allocate when
+//	making new objects in class i
+// class_to_transfercount[i] = number of objects to move when
+//	taking a bunch of objects out of the central lists
+//	and putting them in the thread free list.
+/* 相应的实现在文件msize.c中 */
+int32	runtime路SizeToClass(int32);
+extern	int32	runtime路class_to_size[NumSizeClasses];
+extern	int32	runtime路class_to_allocnpages[NumSizeClasses];
+extern	int32	runtime路class_to_transfercount[NumSizeClasses];
+extern	void	runtime路InitSizes(void);
+
+
+// Per-thread (in Go, per-M) cache for small objects.
+// No locking needed because it is per-thread (per-M).
+typedef struct MCacheList MCacheList;
+struct MCacheList
+{
+	MLink *list;
+	uint32 nlist;
+	uint32 nlistmin;
+};
+
+struct MCache
+{
+	MCacheList list[NumSizeClasses];
+	uint64 size;
+	int64 local_cachealloc;	// bytes allocated (or freed) from cache since last lock of heap
+	int64 local_objects;	// objects allocated (or freed) from cache since last lock of heap
+	int64 local_alloc;	// bytes allocated (or freed) since last lock of heap
+	int64 local_total_alloc;	// bytes allocated (even if freed) since last lock of heap
+	int64 local_nmalloc;	// number of mallocs since last lock of heap
+	int64 local_nfree;	// number of frees since last lock of heap
+	int64 local_nlookup;	// number of pointer lookups since last lock of heap
+	int32 next_sample;	// trigger heap sample after allocating this many bytes
+	// Statistics about allocation size classes since last lock of heap
+	struct {
+		int64 nmalloc;
+		int64 nfree;
+	} local_by_size[NumSizeClasses];
+
+};
+
+void*	runtime路MCache_Alloc(MCache *c, int32 sizeclass, uintptr size, int32 zeroed);
+void	runtime路MCache_Free(MCache *c, void *p, int32 sizeclass, uintptr size);
+void	runtime路MCache_ReleaseAll(MCache *c);
+
+// An MSpan is a run of pages.
+enum
+{
+	MSpanInUse = 0,
+	MSpanFree,
+	MSpanListHead,
+	MSpanDead,
+};
+struct MSpan
+{
+	MSpan	*next;		// in a span linked list
+	MSpan	*prev;		// in a span linked list
+	MSpan	*allnext;	// in the list of all spans
+	PageID	start;		// starting page number
+	uintptr	npages;		// number of pages in span
+	MLink	*freelist;	// list of free objects
+	uint32	ref;		// number of allocated objects in this span
+	uint32	sizeclass;	// size class
+	uint32	state;		// MSpanInUse etc
+	int64   unusedsince;	// First time spotted by GC in MSpanFree state
+	uintptr npreleased;	// number of pages released to the OS
+	byte	*limit;		// end of data in span
+};
+
+void	runtime路MSpan_Init(MSpan *span, PageID start, uintptr npages);
+
+// Every MSpan is in one doubly-linked list,
+// either one of the MHeap's free lists or one of the
+// MCentral's span lists.  We use empty MSpan structures as list heads.
+void	runtime路MSpanList_Init(MSpan *list);
+bool	runtime路MSpanList_IsEmpty(MSpan *list);
+void	runtime路MSpanList_Insert(MSpan *list, MSpan *span);
+void	runtime路MSpanList_Remove(MSpan *span);	// from whatever list it is in
+
+
+// Central list of free objects of a given size.
+struct MCentral
+{
+	Lock;
+	int32 sizeclass;
+	MSpan nonempty;
+	MSpan empty;
+	int32 nfree;
+};
+
+void	runtime路MCentral_Init(MCentral *c, int32 sizeclass);
+int32	runtime路MCentral_AllocList(MCentral *c, int32 n, MLink **first);
+void	runtime路MCentral_FreeList(MCentral *c, int32 n, MLink *first);
+
+// Main malloc heap.
+// The heap itself is the "free[]" and "large" arrays,
+// but all the other global data is here too
+struct MHeap
+{
+	Lock;
+	MSpan free[MaxMHeapList];	// free lists of given length
+	MSpan large;			// free lists length >= MaxMHeapList
+	MSpan *allspans;
+
+	// span lookup
+	MSpan *map[1<<MHeapMap_Bits];
+
+	// range of addresses we might see in the heap
+	byte *bitmap;
+	uintptr bitmap_mapped;
+	byte *arena_start;
+	byte *arena_used;
+	byte *arena_end;
+
+	// central free lists for small size classes.
+	// the union makes sure that the MCentrals are
+	// spaced CacheLineSize bytes apart, so that each MCentral.Lock
+	// gets its own cache line.
+	union {
+		MCentral;
+		byte pad[CacheLineSize];
+	} central[NumSizeClasses];
+
+	FixAlloc spanalloc;	// allocator for Span*
+	FixAlloc cachealloc;	// allocator for MCache*
+};
+extern MHeap runtime路mheap;
+
+void	runtime路MHeap_Init(MHeap *h, void *(*allocator)(uintptr));
+MSpan*	runtime路MHeap_Alloc(MHeap *h, uintptr npage, int32 sizeclass, int32 acct);
+void	runtime路MHeap_Free(MHeap *h, MSpan *s, int32 acct);
+MSpan*	runtime路MHeap_Lookup(MHeap *h, void *v);
+MSpan*	runtime路MHeap_LookupMaybe(MHeap *h, void *v);
+void	runtime路MGetSizeClassInfo(int32 sizeclass, uintptr *size, int32 *npages, int32 *nobj);
+void*	runtime路MHeap_SysAlloc(MHeap *h, uintptr n);
+void	runtime路MHeap_MapBits(MHeap *h);
+void	runtime路MHeap_Scavenger(void);
+
+void*	runtime路mallocgc(uintptr size, uint32 flag, int32 dogc, int32 zeroed);
+int32	runtime路mlookup(void *v, byte **base, uintptr *size, MSpan **s);
+void	runtime路gc(int32 force);
+void	runtime路markallocated(void *v, uintptr n, bool noptr);
+void	runtime路checkallocated(void *v, uintptr n);
+void	runtime路markfreed(void *v, uintptr n);
+void	runtime路checkfreed(void *v, uintptr n);
+int32	runtime路checking;
+void	runtime路markspan(void *v, uintptr size, uintptr n, bool leftover);
+void	runtime路unmarkspan(void *v, uintptr size);
+bool	runtime路blockspecial(void*);
+void	runtime路setblockspecial(void*, bool);
+void	runtime路purgecachedstats(M*);
+
+enum
+{
+	// flags to malloc
+	FlagNoPointers = 1<<0,	// no pointers here
+	FlagNoProfiling = 1<<1,	// must not profile
+	FlagNoGC = 1<<2,	// must not free or scan for pointers
+};
+
+void	runtime路MProf_Malloc(void*, uintptr);
+void	runtime路MProf_Free(void*, uintptr);
+void	runtime路MProf_GC(void);
+int32	runtime路helpgc(bool*);
+void	runtime路gchelper(void);
+
+bool	runtime路getfinalizer(void *p, bool del, void (**fn)(void*), int32 *nret);
+void	runtime路walkfintab(void (*fn)(void*));

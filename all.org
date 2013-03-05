@@ -272,9 +272,8 @@ static Itab*  itab(InterfaceType *inter, Type *type, int32 canfail)
 在具体实现上面还有一些优化过程，比如接口值的真实数据指针那个域，如果真实数据大小是32位，就不用存指针了，直接存数据本身。再有就是对类接口类型interface{}，其itab中是不需要方法表的，所以这里不是itab而直接是一个指向真实数据的类型描述结构的指针。
 
 ------------------------------------------------------------------------------------------------- 
-* 垃圾回收
-
 * 调度器
+** 总体介绍  
 $GOROOT/src/pkg/runtime目录很重要，值得好好研究，源代码可以从runtime.h开始读起。
 
 goroutine实现的是自己的一套线程系统，语言级的支持，与pthread或系统级的线程无关。
@@ -291,7 +290,7 @@ status//线程状态，如Gidle,Grunnable,Grunning,Gsyscall,Gwaiting,Gdead等\\
 
 有个常驻的寄存器extern register G* g被使用，这个是当前线程的线程控制块指针。amd64中这个寄存器是使用R15，在x86中使用0(GS)  分段寄存器
 
-结构体M名字应该是machine的缩写。是对机器的抽象，m其实是线程。
+结构体M名字应该是machine的缩写。是对机器的抽象，m其实是对应到操作系统线程。
 
 proc.c中是实现的线程调度相关。
 
@@ -320,7 +319,7 @@ INT	$0x80\\
 
 回到runtime.newm函数继续看,它调用runtime.newosproc建立了新的线程,线程是以runtime.mstart为入口的,那么接下来看mstart函数.
 
-mstart是runtime.newosproc新建的线程的入口地址,新线程执行时会从这里开始运行.新线程的执行和goroutine的执行是两个概念,由于有m这一层对机器的抽象,是m在执行g而不是线程在执行g.所以线程的入口是mstart,g的执行要到schedule才算入口.
+mstart是runtime.newosproc新建的线程的入口地址,新线程执行时会从这里开始运行.新线程的执行和goroutine的执行是两个概念,由于有m这一层对机器的抽象,是m在执行g而不是线程在执行g.所以线程的入口是mstart,g的执行要到schedule才算入口.函数mstart的最后调用了schedule.
 
 终于到了schedule了!
 
@@ -345,7 +344,7 @@ runtime.entersyscall做的事情大致是设置g的状态为Gsyscall,减少mcpu.
 runtime.exitsyscall函数中,如果退出系统调用后mcpu小于mcpumax,直接设置g的状态Grunning.表示让它继续运行.否则如果mcpu达到上限了,则设置readyonstop,表示下一次schedule中将它改成Grunnable了放到就绪队列中
 
 现在Gwaiting,Grunnable,Grunning,Gwaiting都出现过的,接下来看最后两种状态Gmoribund和Gdead.看runtime.goexit函数.这个函数直接把g的状态设置成Gmoribund,然后调用gosched,进入到schedule中.在schedule中如果遇到状态为Gmoribund的g,直接设置g的状态为Gdead,将g与m分离,把g放回到free队列.
---------
+** 简单理解
 接下来看一些有意思点的吧,先不读代码了.一个常规的 线程池+任务队列 的模型如图所示:
 ./image/worker.jpg
 把每个工作线程叫worker的话,每条线程运行一个worker,每个worker做的事情就是不停地从队列中取出任务并执行:
@@ -375,6 +374,58 @@ struct G {
 ../image/m_g.jpg
 然后就变成了线程的入口是mstart,而goroutine的入口是在schedule中m和g都满足之后切换上下文进入的.
 只是由于要优化,所以会搞的更复杂一些.比如要重用内存空间所以会有gfree和mhead之类的东西.
+** 还有几个没讲清楚的地方
+一个没讲清楚的地方就是m->g0这是个什么东西
+还有一点疑问就是:一个m对应一个系统线程,当g进入到syscall时会和m一起绑定.如果g不停地进入syscall并且暂时不返回,岂不是会开很多的系统级线程??
+m寄存器的切换
+
+* 内存管理
+go的内存分配器是基于tcmalloc的.为每个系统线程M分配一个本地的MCache,少量的地址分配就直接从Cache中分配,并且定期做垃圾回收,将线程本地Cache中的空闲内存返回给全局控制堆.
+
+小于32K为小对象,大对象直接从全局控制堆上以页(4k)为单位进行分配,也就是说大对象总是以页对齐的.
+
+一个页可以存入一些相同大小的小对象,小对象从本地内存链表中分配,大对象从中心内存堆中分配
+
+大约有100种内存块类别,每一类别都有自己对象的free list.小于32kB的内存分配被向上取整到对应的尺寸类别,从相应的free list中分配.一页内存可以被分裂成一种尺寸类别的对象,然后由free list分配器管理.
+
+分配器的数据结构包括:
++ FixAlloc: 固定大小(128kB)的对象的空闲链分配器,被分配器用于管理存储
++ MHeap: 分配堆,按页的粒度进行管理(4kB)
++ MSpan: 一些由MHeap管理的页
++ MCentral: 对于给定尺寸类别的共享的free list
++ MCache: 用于小对象的每M一个的cache
++ MStats: 关于分配的统计信息
+
+分配一个小对象(<32kB)进行的缓存层次结构:
+1. 将小对象大小向上取整到一个对应的尺寸类别,查找相应的MCache的空闲链表,如果链表不空,直接从上面分配一个对象.这个过程可以不必加锁.
+2. 如果MCache自由链是空的,通过从MCentral自由链拿一些对象进行补充.拿"一些"分摊了MCentral锁的开销
+3. 如果MCentral自由链是空的,则通过从MHeap中拿一些页进行补充,然后将这些内存截断成规定的大小.分配一些的对象分摊了对堆加锁的开销
+4. 如果MHeap是空的,或者没有足够大小的页了,从操作系统分配一组新的页(至少1MB).分配一大批的页分摊了从操作系统分配的开销.
+
+释放一个小对象进行类似的层次:
+1. 查找对象所属的尺寸类别,将它添加到MCache的自由链
+2. 如果MCache自由链太长或者MCache内存大多了,则返还一些到MCentral自由链
+3. 如果在某个范围的所有的对象都归还到MCentral链了,则将它们归还到页堆.
+4. 如果堆的内存太多,则归还一些到操作系统(TODO:这步还没有实现)
+
+分配和释放大的对象则直接使用页堆,跳过MCache和MCentral自由链
+
+MCache和MCentral中自由链的小对象可能是也可能不是清0了的.当且仅当该对象的第2个字节是清0时,它是清0了的.页堆中的总是清零的.当一定范围的对象归还到页堆时,需要先清零.
+
+写到这里突然看到一篇文章,我觉得他写得比我好,所以我就不继续写下去了:
+http://shiningray.cn/tcmalloc-thread-caching-malloc.html
+
+----------------
+涉及的文件包括:
+malloc.h 头文件
+malloc.goc 最外层的包装
+msize.c 将各种大小向上取整到相应的尺寸类别
+mheap.c 对应MHeap中相关实现,还有MSpan
+mcache.c 对应MCache中相关实现
+mcentral.c 对应MCentral中相关实现
+mem_linux.c SysAlloc等sys相关的实现
+* 垃圾回收
+* 类型系统
 * 收集的一些关于go internals的链接：
 
 http://code.google.com/p/try-catch-finally/wiki/GoInternals
@@ -388,3 +439,5 @@ http://research.swtch.com/goabstract
 http://blog.csdn.net/hopingwhite/article/details/5782888
 
 http://www.douban.com/note/251142022/ 调度器
+
+http://shiningray.cn/tcmalloc-thread-caching-malloc.html tcmalloc内存管理
