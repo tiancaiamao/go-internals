@@ -424,6 +424,56 @@ mheap.c 对应MHeap中相关实现,还有MSpan
 mcache.c 对应MCache中相关实现
 mcentral.c 对应MCentral中相关实现
 mem_linux.c SysAlloc等sys相关的实现
+
+** MHeap层次
+MHeap层次用于直接分配较大(>32kB)的内存空间，以及给MCentral和MCache等下层提供空间。它管理的基本单位是MSpan。MSpan是一个表示若干连续内存页的数据结构，简化后如下：
+#+begin_src C
+struct MSpan
+{
+	PageID	start;		// starting page number
+	uintptr	npages;		// number of pages in span
+};
+#+end_src
+通过一个基地址+(页号*页大小)，就可以定位到实际的地址空间了。
+
+MHeap负责将MSpan组织和管理起来，MHeap数据结构中的重要部分如图所示。
+[[../image/mheap.jpg]]
+free是一个分配池，从free[i]出去的MSpan每个大小都i页的,总共256个槽位。再大了之后，大小就不固定了，由large链起来。
+分配过程：
+如果能从free[]的分配池中分配，则从其中分配。如果发生切割则将剩余部分放回free[]中。比如要分配2页大小的空间，从图上2号槽位开始寻找，直到4号槽位有可用的MSpan，则拿一个出来，切出两页，剩余的部分再放回2号槽位中。
+否则从large链表中去分配，按BestFit算法去找一块空间
+
+化整为零简单，化零为整麻烦。回收的时候如果相邻的块是未使用的，要进行合并，否则一直划分下去就会产生很多碎片，找不到一个足够大小的连续空间。因为涉及到合并，回收会比分配复杂一些，所有就有什么伙伴算法，边界标识算法，位示图之类的。
+go在这里使用的大概类似于位示图。可以看到MHeap中有一个
+#+begin_src c
+	MSpan *map[1<<MHeapMap_Bits];
+#+end_src
+map作用就是将地址映射到相应的MSpan。每一页空间都会对应到map中的一个MSpan指针。给定一个地址，可以通过(地址-基地址)/页大小 得到页号，再通过map\[页号\]就得到了相应的MSpan结构体。
+
+回收过程：
+对一个MSpan，会通过它的址址查找它相邻的页的址址，再通过map映射得到与它相邻的MSpan，如果MSpan的state是未使用，则进行合并。归还到free[]分配池或者是large中。
+** MCache层次
+MCache层次跟MHeap层次非常像，也是一个分配池，对每个尺寸的类别都有一个空闲对象的单链表。不过没有那个MHeap中的large。
+
+每个M都有一个自己的局部内存缓存MCache，这样分配小对象的时候直接从MCache中分配，就不用加锁了。这就是tcmalloc分配非常高效的原因之一。
+分配过程就是直接从对应的尺寸类别中拿空闲对象，如果不够就找MCentral拿一些过来。
+释放过程就是放回到相应的链表中，如果空闲链表中对象太多，就归还一部分到MCentral。如果MCache空间太多也归还一部分到MCentral。
+** MCentral
+MCentral层次是作为MCache和MHeap的连接。对上，它从MHeap中申请MSpan;对下，它将MSpan划分成各种小尺寸对象，供MCache使用。
+
+注意，每个MSpan只会分割成同种大小的对象。每个MCentral也是只含同种大小的对象。MCentral结构中，有一个nonempty的MSpan链和一个empty的MSpan链，分别表示还有空间的MSpan和装满了对象的MSpan。
+如图。
+[[../image/mcentral.jpg]]
+分配还是很简单，直接从MCentral->nonempty->freelist分配。如果发现freelist空了，则说明这一块MSpan满了，将它移到MCentral->empty。
+前面我说过，回收比分配复杂，因为涉及到合并。这里用引用计数弄的。MSpan中每划出一个对象，则引用计数加一,每回收一个对象，则引用计数减一。如果减之后引用计数为零了，则说明这整块的MSpan已经没被使用了，可以将它归还给MHeap。
+
+忘记说了，前面MHeap结构体中也有用于管理MCentral的相关域。每种尺寸类别都会有一个central的，所以是NumSizeClasses的数组。MCentral中再通过MSpan划分成小对象的，就是从MSpan->freelist链起来。
+#+begin_src c
+	union {
+		MCentral;
+		byte pad[CacheLineSize];
+	} central[NumSizeClasses];
+#+end_src
 * 垃圾回收
 * 类型系统
 * 收集的一些关于go internals的链接：
