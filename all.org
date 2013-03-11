@@ -492,7 +492,7 @@ runtime·parforsetup(work.sweepfor, work.nproc, runtime·mheap->nspan, nil, true
 功能上差不多，一个是非递归一个是递归。scanblock从工作区开始扫描，扫描到的加个mark标记，如果遇到可能的指针，不是递归处理而是加到工作队列中。这样可以多个线程同时进行。
 并行设计中，有设置工作区的概念，多个worker同时去工作缓存中取数据出来处理，如果自己的任务做完了，就会从其它的任务中“偷”一些过来执行。
 
-** 虚拟机
+** 精确的垃圾回收以及虚拟机
 scanblock函数非常难读，我觉得应该好好重构一下。上面有两个大的循环，第一个作用是对整个扫描块区域，将类型信息提取出来。另一个大循环是实现一个虚拟机操作码的解析执行。
 
 为什么会弄个虚拟机呢？目前我也不明白为啥这么搞。反正垃圾回收的操作都被弄成了操作码，用虚拟机去解释执行的。不同类型的对象，由于垃圾回收的方式不一样，把各种类型的回收操作独立出来做成操作码，可能是灵活度更大吧。
@@ -515,6 +515,106 @@ type & (PtrSize-1)
 就可以得到类型。
 
 gc的触发是由一个gcpercent的变量控制的,当新分配的内存占已在使用中的内存的比例超过gcprecent时就会触发.比如说gcpercent=100,当前使用了4M,当内存分配到达8M时就会再次gc.
+* 番外篇
+读代码始终有些东西还是很难看懂，如果自己写代码，就能真正理解了，所以这一节就尝试自己写写代码。要写的是一个收集当前内存状态的函数，自己写以便理解前面内存管理的垃圾回收的一些东西。
+
+在go中调用c代码，如果没有调用c的库函数，是可以不必要用到cgo的。c函数中可以使用go的运行时代码，比如runtime·printf。
+建个test文件夹，写个test.go文件，上面进行声明：
+#+begin_src c
+package c
+func MemInfo()
+#+end_src
+然后是test文件夹下，建个test.c实现MemInfo函数。函数名是void ·MemInfo()，而不是void MemInfo()，注意函数中的那个·符号。
+
+在这个c文件中是可以访问go的runtime的全局对象的，所以runtime·mheap就是堆了。这是一个MHeap结构体，通过上面的allspans域就可以访问到所有的MSpan。根据MSpan结构中有状态信息，可以跳过不关心的MSpan。
+#+begin_src c
+h = runtime·mheap;
+for(i=0; i < h->nspan; i++) {
+	s = h->allspans[i];
+	if(s == nil || s->state != MSpanInUse)
+		continue;
+}
+#+end_src
+到这里时会遇到一个问题，MSpanInUse未定义，没关系，把go源代码中的malloc.h拷到test文件夹就行了。后面还会用到type.h，也先拷过来。只有runtime.h是go编译c代码时会默认使用，其它的runtime中的头文件，想用的话拷过来就好了。不过想任意调用runtime中的函数还是不行的，只有runtime.h中声明的runtime·xxx是可以调用的，像malloc.h中声明的函数都调用不了。
+
+接下来就是对每块MSpan进行分析了。对照malloc.h文件中MSpan的结构体定义，可以打印出这个结构体的一些信息:
+#+begin_src c
+MSpan *s;
+runtime·printf("页号:%D,页数:%D,大小类:%d，元素大小:%D\n", s->start, s->npages, s->sizeclass, s->elemsize);
+#+end_src
+
+MSpan的types是一个MTypes结构，继续打印出类型信息。根据MTypes中的compression的不同，data对应的是不同的东西。
+#+begin_src c
+	switch(s->types.compression) {
+	case MTypes_Empty:
+		break;
+	case MTypes_Single:
+		runtime·printf("MTypes_Single\n");
+		break;
+	case MTypes_Words:
+		runtime·printf("MTypes_Words\n");
+		break;
+	case MTypes_Bytes:
+		runtime·printf("MTypes_Bytes\n");
+        }
+#+end_src
+
+这里的类型信息是关于整块MSpan的。MTypes_Empty表明这一块的类型信息不可用。MTypes_Single表示这整个MSpan存的都是一个对象。MTypes_Bytes是这个MSpan中存放的不同对象类型在7种以内。而MTypes_Words表明这块MSpan存放了超过8种以上的不同类型的对象。
+
+MTypes_XXX是关于整块MSpan在存放的对象类型的信息。比如挑其中MTypes_Bytes的MSpan为例，可以继续再看具体对象的类型信息。data[i]是一个uintptr值，值的高位是指向Type结构体的指针，低位是类型信息。
+#+begin_src c
+ptr = data[i]
+Type *t = (Type*)(ptr & ~(uintptr)(PtrSize-1));
+ptr & (PtrSize-1)
+#+end_src
+MTypes_Bytes中共有最多7种类型信息，可能data\[1\]到data\[7\]得到对应的Type结构体指针。然后可以继续打印Type结构体内的一些信息出来。
+
+最后代码放在[[http://github.com/tiancaiamao/go-internals/test/][这里]] 了，想跑的可以拿去玩一玩。
+#+begin_src c
+package main
+
+import (
+	"github.com/tiancaiamao/go-internals/test"
+	"github.com/syndtr/goleveldb/leveldb"
+	"github.com/syndtr/goleveldb/leveldb/storage"
+	"github.com/syndtr/goleveldb/leveldb/opt"
+)
+
+type S struct {
+	aa uint32
+	bb []byte
+	cc string
+}
+
+func main() {
+	for i:=0; i <100000; i++ {
+		workthegc()
+	}
+	for i:=0; i<200; i++ {
+		func() []S {
+			return make([]S,300)
+		}()
+	}
+
+	stor, _ := storage.OpenFile("test.db")
+	defer stor.Close()
+	db, _ := leveldb.Open(stor, &opt.Options{Flag: opt.OFCreateIfMissing})
+	defer db.Close()
+
+	ro := &opt.ReadOptions{}
+	wo := &opt.WriteOptions{}
+	db.Get([]byte("key"), ro)
+	db.Put([]byte("key"), []byte("value"), wo)
+	db.Delete([]byte("key"), wo)
+
+	test.TypeInfo()
+}
+
+func workthegc() []byte {
+	return make([]byte, 1029)
+}
+#+end_src
+额...我啥都不会，就是精通"hello world"，哈哈～
 * 类型系统
 ** chan的实现
 ** interface的实现
