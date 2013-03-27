@@ -67,6 +67,19 @@ arg2\\
 保存函数返回地址\\
 被调者的栈...\\
 #+end_quote
+不过要注意的就是参数是按机器字长对齐过的.
+
+理论上，如果c的代码中没调用c库函数，那么从go调用c应该是完全不必要cgo的。
+在.go文件中声音,在.c文件中实现.必须包含runtime.h头文件.
+go中声明为
+func f(arg1,arg2,arg3 int32) (ret1, ret2 int32)
+在c中的实现是:
+#+begin_src c
+void f(arg1,arg2,arg3, ret1, ret2) {
+    FLUSH(&ret1)
+    FLUSH(&ret2)
+}
+#+end_src
 * 分段栈
 go语言中使用的是栈不是连续的。原因是需要支持goroutine。分段栈的重要意义就在于，栈空间初始分配很小的大小，然后可以随便需要自动地增长栈空间．这样在多线程环境中就可以开千千万万个线程或协程而不至于耗尽内存．
 
@@ -607,7 +620,7 @@ func main() {
 	db.Put([]byte("key"), []byte("value"), wo)
 	db.Delete([]byte("key"), wo)
 
-	test.TypeInfo()
+	test.MemInfo()
 }
 
 func workthegc() []byte {
@@ -616,7 +629,67 @@ func workthegc() []byte {
 #+end_src
 额...我啥都不会，就是精通"hello world"，哈哈～
 * 类型系统
-** chan的实现
+** chan类型的实现
+   chan类型的实现在文件chan.c中.channel其实就是一个数据结构而已,如下图所示:
+   ../image/chan.jpg
+   其实它本身是一个循环队列,qcount记录了队列总数据个数,dataqsiz记录循环队列的大小,elemalg是元素操作的一个Alg结构体,记录下元素的操作.如copy函数,equal函数,hash函数等.
+   recvq和sendq是两个链表,分别记录下因读chan阻塞和因写chan而阻塞的goroutine.它是一个SudoG结构,该结构中主要的就是一个g和一个elem.如果g阻塞于chan了,那么它就被挂在recvq或sendq中,对应的数据是放在elem中的.
+   
+   如果是带缓冲区的chan,则缓冲区数据实际上是接着Hchan结构体中分配的.会分配
+   #+begin_src c
+c = (Hchan*)runtime路mal(n + hint*elem->size);
+   #+end_src
+
+   以runtime.chansend为例来看向chan中写数据的过程.
+
+   先要区分是同步还是异步.同步是指chan是不带缓冲区的,因此可能写阻塞.而异步是指chan带缓冲区,只有缓冲区满才阻塞.
+   同步的情况,首先会看recvq中有没有因读该管道而阻塞的goroutine,如果有,则把数据拷贝到它的elem中,将它置为ready,然后函数返回.
+   否则要将当前goroutine和数据作为SudoG结构体,挂到通道的阻塞队列中.
+
+   异步的情况,如果缓冲区满了,也是要将当前goroutine和数据一起作为SudoG结构体挂在sendq队列中的.
+   否则也是先看有没有recvq,有就唤醒.没有就将数据放到通过的缓冲区中.
+   
+runtime.chanrecv跟chansend一个样子的.只不过一个是收一个是发.
+
+select-case被中的chan编译成了if-else.比如
+#+begin_src c
+select {
+case v = <-c:
+        ...foo
+default:
+        ...bar
+}
+#+end_src
+会被编译为:
+#+begin_src c
+if selectnbrecv(&v, c) {
+        ...foo
+} else {
+        ...bar
+}
+#+end_src
+
+类似地
+#+begin_src c
+select {
+case v, ok = <-c:
+	... foo
+default:
+	... bar
+}
+#+end_src
+会被编译为:
+#+begin_src c
+if c != nil && selectnbrecv2(&v, &ok, c) {
+	... foo
+} else {
+	... bar
+}
+#+end_src
+select-case中的case是随机的.而不像switch-case那样一条一条的顺序.如何实现随机的呢?
+其实上面用到了Scase和Select数据结构.在Select数据结构中有个Scase数组,记录下了每一个Scase.
+然后将数组元素随机排列,这样就可以将Scase乱序了.
+
 ** interface的实现
 
 假设我们把类型分为具体类型和接口类型。
@@ -664,6 +737,7 @@ static Itab*  itab(InterfaceType *inter, Type *type, int32 canfail)
 在具体实现上面还有一些优化过程，比如接口值的真实数据指针那个域，如果真实数据大小是32位，就不用存指针了，直接存数据本身。再有就是对类接口类型interface{}，其itab中是不需要方法表的，所以这里不是itab而直接是一个指向真实数据的类型描述结构的指针。
 
 ------------------------------------------------------------------------------------------------- 
+** 关于反射
 * 收集的一些关于go internals的链接：
 
 http://code.google.com/p/try-catch-finally/wiki/GoInternals
