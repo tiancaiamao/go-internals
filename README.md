@@ -5,10 +5,16 @@
 
 这本书目前我放在Github上，我现在基本每天晚上抽空会写一些，时间有限、能力有限，所以希望更多的朋友参与到这个开源项目中来。
 
-# 通过捐款支持谢大的书
-本书使用的[astaxie](https://github.com/astaxie/build-web-application-with-golang)的模板。
+# 参与到本项目
 
-如果你喜欢这本《深入解析Go》的话， 可以给他捐款， 支持他继续为Go语言，为开源事业做出贡献。
+你可以fork一份代码，如果对某些章节很有兴趣，可以写作相应章节的内容并pull request给我。
+
+或者你也正在读Go的源代码，可以给代码加入中文注释。
+
+不管任何形式的参与都是非常受欢迎的。
+
+# 通过捐款支持谢大的书
+本书使用的[astaxie](https://github.com/astaxie/build-web-application-with-golang)的模板。如果你喜欢这本《深入解析Go》的话， 可以给他捐款， 支持他继续为Go语言，为开源事业做出贡献。
 
 捐款地址： [https://me.alipay.com/astaxie](https://me.alipay.com/astaxie)
 
@@ -16,7 +22,7 @@
 ## 交流
 欢迎大家加入QQ群：259316004 《Go Web编程》专用交流群 我在里面潜水
 
-论坛交流：http://bbs.mygolang.com/forum.php 专门有个源代码分析的版块的
+论坛交流：http://bbs.mygolang.com/forum.php 源代码分析版块
 
 ## 致谢
 先留空
