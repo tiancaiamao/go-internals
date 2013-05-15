@@ -15,6 +15,7 @@ static	void	makeslice1(SliceType*, intgo, intgo, Slice*);
 static	void	growslice1(SliceType*, Slice, intgo, Slice *);
 	void	runtime·copy(Slice to, Slice fm, uintptr width, intgo ret);
 
+// make([]T, len, cap)会调用到这个函数来。注意这里的ret是整个结构体传进来的。所以按go的函数调用协议，返回值在栈中的布局其实是一个结构体而不是结构体指针。
 // see also unsafe·NewArray
 // makeslice(typ *Type, len, cap int64) (ary []any);
 void
@@ -25,6 +26,8 @@ runtime·makeslice(SliceType *t, int64 len, int64 cap, Slice ret)
 	// when someone does make([]T, bignumber). 'cap out of range' is true too,
 	// but since the cap is only being supplied implicitly, saying len is clearer.
 	// See issue 4085.
+	//(intgo)len != len是将len强制转换为go的int(依赖于机器位数,32或64),这就说明make([]T, len, cap)上面支持的len其实是int类型的
+	//也就意味着，在32位机器上，传一个很大的数，超过32位能表示的范围是会出错的。64位机器上没什么感觉。
 	if(len < 0 || (intgo)len != len || t->elem->size > 0 && len > MaxMem / t->elem->size)
 		runtime·panicstring("makeslice: len out of range");
 
@@ -43,6 +46,7 @@ runtime·makeslice(SliceType *t, int64 len, int64 cap, Slice ret)
 // Dummy word to use as base pointer for make([]T, 0).
 // Since you cannot take the address of such a slice,
 // you can't tell that they all have the same base pointer.
+//优化，由于make([]T, 0)不必要真正分配空间， 但是slice->array最好不要是空值
 uintptr runtime·zerobase;
 
 static void
@@ -57,16 +61,16 @@ makeslice1(SliceType *t, intgo len, intgo cap, Slice *ret)
 
 	if(size == 0)
 		ret->array = (byte*)&runtime·zerobase;
-	else if((t->elem->kind&KindNoPointers))
+	else if((t->elem->kind&KindNoPointers)) //elem是一个Type结构，记录了类型信息，FlagNoPointers信息对垃圾回收很有用
 		ret->array = runtime·mallocgc(size, FlagNoPointers, 1, 1);
 	else {
 		ret->array = runtime·mallocgc(size, 0, 1, 1);
 
-		if(UseSpanType) {
+		if(UseSpanType) { //UseSpanType是enum的1  这里恒为真
 			if(false) {
 				runtime·printf("new slice [%D]%S: %p\n", (int64)cap, *t->elem->string, ret->array);
 			}
-			runtime·settype(ret->array, (uintptr)t->elem | TypeInfo_Array);
+			runtime·settype(ret->array, (uintptr)t->elem | TypeInfo_Array); //也是为精确的垃圾回收提供信息。有类型信息后垃圾回收可以做得更精确
 		}
 	}
 }
@@ -87,6 +91,7 @@ runtime·appendslice(SliceType *t, Slice x, Slice y, Slice ret)
 	if(m < x.len)
 		runtime·throw("append: slice overflow");
 
+	//如果前一个slice的cap是足够大的，则直接将后一个赋值过来，否则要进行grow
 	if(m > x.cap)
 		growslice1(t, x, m, &ret);
 	else
@@ -107,10 +112,11 @@ runtime·appendslice(SliceType *t, Slice x, Slice y, Slice ret)
 
 	// A very common case is appending bytes. Small appends can avoid the overhead of memmove.
 	// We can generalize a bit here, and just pick small-sized appends.
+	//如果只是复制很少的内容，直接for循环赋值效率会高一些，避免了memmove函数调用的开销
 	p = ret.array+ret.len*w;
 	q = y.array;
 	w *= y.len;
-	if(w <= appendCrossover) {
+	if(w <= appendCrossover) { //appendCrossover在386和amd64中是16，在arm中是8
 		if(p <= q || w <= p-q) // No overlap.
 			while(w-- > 0)
 				*p++ = *q++;
@@ -124,7 +130,7 @@ runtime·appendslice(SliceType *t, Slice x, Slice y, Slice ret)
 		runtime·memmove(p, q, w);
 	}
 	ret.len += y.len;
-	FLUSH(&ret);
+	FLUSH(&ret); //go的多值返回在c这边的实现方式
 }
 
 
@@ -173,7 +179,6 @@ runtime·appendstr(SliceType *t, Slice x, String y, Slice ret)
 	FLUSH(&ret);
 }
 
-
 // growslice(type *Type, x, []T, n int64) []T
 void
 runtime·growslice(SliceType *t, Slice old, int64 n, Slice ret)
@@ -206,6 +211,10 @@ runtime·growslice(SliceType *t, Slice old, int64 n, Slice ret)
 	}
 }
 
+//grows的大小增长规则：
+//如果新的大小是当前大小2倍以上，则大小增长为新大小
+//否则，如果当前大小小于1024个，按每次2倍增长。
+//否则，按每次是上一次大小的1.25倍增长
 static void
 growslice1(SliceType *t, Slice x, intgo newcap, Slice *ret)
 {
