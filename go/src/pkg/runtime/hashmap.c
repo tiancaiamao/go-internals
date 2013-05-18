@@ -11,6 +11,8 @@
 
 // This file contains the implementation of Go's map type.
 //
+// map就是哈希表，数据组织成桶(bucket)的数组。每个桶包含最多8个key/value对。
+// hash值的低位用到选择一个bucket，高位用于区分在桶内的入口。
 // The map is just a hash table.  The data is arranged
 // into an array of buckets.  Each bucket contains up to
 // 8 key/value pairs.  The low-order bits of the hash are
@@ -18,13 +20,18 @@
 // high-order bits of each hash to distinguish the entries
 // within a single bucket.
 //
+// 如果超过8个key被哈希到了同一个桶中，则以拉链的方式将桶链起来
 // If more than 8 keys hash to a bucket, we chain on
 // extra buckets.
 //
+// 当哈希表增长时，分配一个新的桶的数组，大小是当前的两倍。将各个桶从旧的数组中，增量地复制到新的数组。
 // When the hashtable grows, we allocate a new array
 // of buckets twice as big.  Buckets are incrementally
 // copied from the old bucket array to the new bucket array.
 //
+// map的遍历是遍历桶的数组，以遍历到的顺序返回keys。
+// 为了保持遍历的语义，我们不会将keys在桶内移动！（否则keys会被返回0次或者2次）
+// 当hash表增长的时候，如果遍历到的桶已被移动到了新表，需要遍历旧的表并且检查新的表
 // Map iterators walk through the array of buckets and
 // return the keys in walk order (bucket #, then overflow
 // chain order, then bucket index).  To maintain iteration
@@ -40,7 +47,7 @@
 
 // Maximum average load of a bucket that triggers growth.
 #define LOAD 6.5
-
+// 这里取6.5是多次实现测量的一个比较合理的值。hash本质就是一个空间换时间，取小了会太浪费空间，取大了会降低命中率，增加访问次数。
 // Picking LOAD: too large and we have lots of overflow
 // buckets, too small and we waste a lot of space.  I wrote
 // a simple program to check some stats for different loads:
@@ -64,6 +71,7 @@
 // Keep in mind this data is for maximally loaded tables, i.e. just
 // before the table grows.  Typical tables will be somewhat less loaded.
 
+// 最大key或者value内联大小（而不是对每个元素都进行malloc）
 // Maximum key or value size to keep inline (instead of mallocing per element).
 // Must fit in a uint8.
 // Fast versions cannot handle big values - the cutoff size for
@@ -74,22 +82,30 @@
 typedef struct Bucket Bucket;
 struct Bucket
 {
-	uint8  tophash[BUCKETSIZE]; // top 8 bits of hash of each entry (0 = empty)
-	Bucket *overflow;           // overflow bucket, if any
+	uint8  tophash[BUCKETSIZE]; // hash值的高8位....低位从bucket的array定位到bucket，高位用于定位bucket内的key/value项
+	Bucket *overflow;           // 溢出桶链表，如果有
 	byte   data[1];             // BUCKETSIZE keys followed by BUCKETSIZE values
 };
+// 注意：将所有的keys放一起，所有的values放一起，处理起来比key/value/key/value的放置方式麻烦，但是好处是
+// 这样可以消除对齐，比如map[int64]int8
 // NOTE: packing all the keys together and then all the values together makes the
 // code a bit more complicated than alternating key/value/key/value/... but it allows
 // us to eliminate padding which would be needed for, e.g., map[int64]int8.
 
 // Low-order bit of overflow field is used to mark a bucket as already evacuated
 // without destroying the overflow pointer.
+// 低位的 溢出域 用于标记一个桶已经 ？？ 但是没有销毁溢出链指针 
+// 只有旧的表中的桶会被标记为 ？？
 // Only buckets in oldbuckets will be marked as evacuated.
 // Evacuated bit will be set identically on the base bucket and any overflow buckets.
+// 这里代码有用到一些技巧：一个指针，肯定是对齐过的。比如4字节对齐，那么后两位肯定是用不上的。如果8字节对齐，那么后3位都是用不上的，肯定为全0
+// 根据这一点，我们可以将这些低位利用起来做标记位，节省空间。只到把低位和0000011这种mask做一个与运算，就会得到原来的指针
+// 这里是用的最低位作为evacuted标记位
 #define evacuated(b) (((uintptr)(b)->overflow & 1) != 0)
 #define overflowptr(b) ((Bucket*)((uintptr)(b)->overflow & ~(uintptr)1))
 
 // Initialize bucket to the empty state.  This only works if BUCKETSIZE==8!
+// 转成uint64后置0，将b->tophash数组全置为0了...
 #define clearbucket(b) { *(uint64*)((b)->tophash) = 0; (b)->overflow = nil; }
 
 struct Hmap
@@ -102,7 +118,7 @@ struct Hmap
 	uint16  bucketsize;   // bucket size in bytes
 
 	uintptr hash0;        // hash seed
-	byte    *buckets;     // array of 2^B Buckets. may be nil if count==0.
+	byte    *buckets;     // array of 2^B Buckets. may be nil if count==0. 2^B大小的buckets是扩容算法的需要，rehash时可以只移动一半的数据
 	byte    *oldbuckets;  // previous bucket array of half the size, non-nil only when growing
 	uintptr nevacuate;    // progress counter for evacuation (buckets less than this have been evacuated)
 };
@@ -119,6 +135,8 @@ enum
 };
 
 // Macros for dereferencing indirect keys
+// Bucket的那个byte *data域，不一定直接是数据本身，可能是存放的指向数据的指针...
+// 应该是像int,uint这种基础类型就存值，像string这种就存指针
 #define IK(h, p) (((h)->flags & IndirectKey) != 0 ? *(byte**)(p) : (p))
 #define IV(h, p) (((h)->flags & IndirectValue) != 0 ? *(byte**)(p) : (p))
 
@@ -128,6 +146,8 @@ enum
 	debug = 0,    // print every operation
 	checkgc = 0 || docheck,  // check interaction of mallocgc() with the garbage collector
 };
+
+// 比如说hash(key)得到一个应该放置的位置pos，整个check函数检查的是，对hash表中所有pos的key，看是否满足hash(key) = pos
 static void
 check(MapType *t, Hmap *h)
 {
@@ -143,19 +163,23 @@ check(MapType *t, Hmap *h)
 	cnt = 0;
 
 	// check buckets
+	// h->buckets + bucket * h->bucketsize是bucket在数组中的哪一项。对每一项
 	for(bucket = 0; bucket < (uintptr)1 << h->B; bucket++) {
-		if(h->oldbuckets != nil) {
+		if(h->oldbuckets != nil) { //只有正在扩容中时，h->oldbuckets才不为空
 			oldbucket = bucket & (((uintptr)1 << (h->B - 1)) - 1);
 			b = (Bucket*)(h->oldbuckets + oldbucket * h->bucketsize);
 			if(!evacuated(b))
 				continue; // b is still uninitialized
 		}
+		// 从bucket数组出去，对每个溢出链的bucket
 		for(b = (Bucket*)(h->buckets + bucket * h->bucketsize); b != nil; b = b->overflow) {
+			// 对桶中的每一个key/value
 			for(i = 0, k = b->data, v = k + h->keysize * BUCKETSIZE; i < BUCKETSIZE; i++, k += h->keysize, v += h->valuesize) {
-				if(b->tophash[i] == 0)
+				if(b->tophash[i] == 0) //为0说明这一项是空着的
 					continue;
 				cnt++;
-				t->key->alg->equal(&eq, t->key->size, IK(h, k), IK(h, k));
+                                //MapType的数据结构中记录了key比较判断相等的函数。这里好像有点问题，你确定是IK? 都是存的指针非直接类么？
+				t->key->alg->equal(&eq, t->key->size, IK(h, k), IK(h, k)); 
 				if(!eq)
 					continue; // NaN!
 				hash = h->hash0;
@@ -197,6 +221,7 @@ check(MapType *t, Hmap *h)
 		}
 	}
 
+	// 检查总的数据是否与HMap结构体中记录的一致
 	if(cnt != h->count) {
 		runtime·printf("%D %D\n", (uint64)cnt, (uint64)h->count);
 		runtime·throw("entries missing");
