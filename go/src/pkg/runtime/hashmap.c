@@ -533,26 +533,27 @@ hash_lookup(MapType *t, Hmap *h, byte **keyp)
 	if(h->count == 0)
 		return nil;
 	hash = h->hash0;
-	t->key->alg->hash(&hash, t->key->size, key);
-	bucket = hash & (((uintptr)1 << h->B) - 1);
-	if(h->oldbuckets != nil) {
+	t->key->alg->hash(&hash, t->key->size, key); //计算hash值
+	bucket = hash & (((uintptr)1 << h->B) - 1); //确定它会到哪一个bucket中,这个计算的是数组内偏移
+	if(h->oldbuckets != nil) { //如果oldbuckets不为空，说明正在扩容。
 		oldbucket = bucket & (((uintptr)1 << (h->B - 1)) - 1);
 		b = (Bucket*)(h->oldbuckets + oldbucket * h->bucketsize);
-		if(evacuated(b)) {
+		if(evacuated(b)) { //如果该bucket还没从迁移过来，则是在旧的bucket中
 			b = (Bucket*)(h->buckets + bucket * h->bucketsize);
 		}
 	} else {
 		b = (Bucket*)(h->buckets + bucket * h->bucketsize);
 	}
-	top = hash >> (sizeof(uintptr)*8 - 8);
+	top = hash >> (sizeof(uintptr)*8 - 8); //top是hash值高位，由它决定key/value对在bucket内的偏移
 	if(top == 0)
 		top = 1;
-	do {
+	do { //对每个出去的溢出链
+		//这个明显会比较蛋疼嘛。相当于整个go的map实现是先hash到一块范围相对较小的区域，然后顺序的去做匹配，明显O(1)这个系数会很大嘛！！还好区域比较小只有8个
 		for(i = 0, k = b->data, v = k + h->keysize * BUCKETSIZE; i < BUCKETSIZE; i++, k += h->keysize, v += h->valuesize) {
-			if(b->tophash[i] == top) {
+			if(b->tophash[i] == top) { //依次比较桶内的每一项存放的tophash与所求的hash值高位
 				k2 = IK(h, k);
 				t->key->alg->equal(&eq, t->key->size, key, k2);
-				if(eq) {
+				if(eq) { //相等的情况下再去做key比较...
 					*keyp = k2;
 					return IV(h, v);
 				}
@@ -643,11 +644,13 @@ hash_insert(MapType *t, Hmap *h, void *key, void *value)
 
  again:
 	bucket = hash & (((uintptr)1 << h->B) - 1);
-	if(h->oldbuckets != nil)
+        //如果当前hash正在扩容中，则函数grow_work确保我们要插入的位置的bucket被移动到了新的桶中
+	//即插入时旧桶是被冻结了的，不会向其它插入数据
+	if(h->oldbuckets != nil) 
 		grow_work(t, h, bucket);
 	b = (Bucket*)(h->buckets + bucket * h->bucketsize);
 	top = hash >> (sizeof(uintptr)*8 - 8);
-	if(top == 0)
+	if(top == 0)  //因为0被用来标记这个key/value为空了...
 		top = 1;
 	inserti = 0;
 	insertk = nil;
@@ -655,7 +658,7 @@ hash_insert(MapType *t, Hmap *h, void *key, void *value)
 	while(true) {
 		for(i = 0, k = b->data, v = k + h->keysize * BUCKETSIZE; i < BUCKETSIZE; i++, k += h->keysize, v += h->valuesize) {
 			if(b->tophash[i] != top) {
-				if(b->tophash[i] == 0 && inserti == nil) {
+				if(b->tophash[i] == 0 && inserti == nil) { //如果有空位则填到这个空位。先来的总会把后面的覆盖掉
 					inserti = &b->tophash[i];
 					insertk = k;
 					insertv = v;
@@ -677,12 +680,13 @@ hash_insert(MapType *t, Hmap *h, void *key, void *value)
 		b = b->overflow;
 	}
 
-	// did not find mapping for key.  Allocate new cell & add entry.
+	// 没有找到key，装载因子满了。进行hash扩容，这个goto用得妙！
 	if(h->count >= LOAD * ((uintptr)1 << h->B) && h->count >= BUCKETSIZE) {
 		hash_grow(t, h);
 		goto again; // Growing the table invalidates everything, so try again
 	}
 
+        //否则分配新的bucket，并添加进去。
 	if(inserti == nil) {
 		// all current buckets are full, allocate a new one.
 		if(checkgc) mstats.next_gc = mstats.heap_alloc;
@@ -694,7 +698,7 @@ hash_insert(MapType *t, Hmap *h, void *key, void *value)
 		insertv = insertk + h->keysize * BUCKETSIZE;
 	}
 
-	// store new key/value at insert position
+	// 将key/value存储到插入位置
 	if((h->flags & IndirectKey) != 0) {
 		if(checkgc) mstats.next_gc = mstats.heap_alloc;
 		kmem = runtime·mallocgc(t->key->size, 0, 1, 0);
@@ -715,6 +719,7 @@ hash_insert(MapType *t, Hmap *h, void *key, void *value)
 		check(t, h);
 }
 
+// remove过程跟insert过程相反的。
 static void
 hash_remove(MapType *t, Hmap *h, void *key)
 {
@@ -741,7 +746,7 @@ hash_remove(MapType *t, Hmap *h, void *key)
 		top = 1;
 	do {
 		for(i = 0, k = b->data, v = k + h->keysize * BUCKETSIZE; i < BUCKETSIZE; i++, k += h->keysize, v += h->valuesize) {
-			if(b->tophash[i] != top)
+			if(b->tophash[i] != top)  //这里是要注意的一个细节。插入的时候是找到第一个空位置就会插入。有个覆盖，删除时，就要删除每一个了。
 				continue;
 			t->key->alg->equal(&eq, t->key->size, key, IK(h, k));
 			if(!eq)
@@ -765,6 +770,7 @@ hash_remove(MapType *t, Hmap *h, void *key)
 			}
 			// TODO: consolidate buckets if they are mostly empty
 			// can only consolidate if there are no live iterators at this size.
+			// TODO，如果bucket很空，则进行合并
 			if(docheck)
 				check(t, h);
 			return;
