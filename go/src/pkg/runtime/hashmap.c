@@ -118,6 +118,9 @@ struct Hmap
 	uint16  bucketsize;   // bucket size in bytes
 
 	uintptr hash0;        // hash seed
+	// 注意，这里不是bucket的指针的数组，而是直接放的bucket的数组。
+	// 私以为这样设计并不一定合理。这样做的好处是分配时可以一次直接分配一块大一些的内存，减少内存分配次数。
+	// 但缺点是在rehash的时候，每次会做数据拷贝整个一块的bucket数组，而不是改指针。
 	byte    *buckets;     // array of 2^B Buckets. may be nil if count==0. 2^B大小的buckets是扩容算法的需要，rehash时可以只移动一半的数据
 	byte    *oldbuckets;  // previous bucket array of half the size, non-nil only when growing
 	uintptr nevacuate;    // progress counter for evacuation (buckets less than this have been evacuated)
@@ -228,6 +231,7 @@ check(MapType *t, Hmap *h)
 	}
 }
 
+//分配的初始大小乘以LOAD之后，至少大于hint，并且是2^n
 static void
 hash_init(MapType *t, Hmap *h, uint32 hint)
 {
@@ -242,7 +246,7 @@ hash_init(MapType *t, Hmap *h, uint32 hint)
 
 	// figure out how big we have to make everything
 	keysize = t->key->size;
-	if(keysize > MAXKEYSIZE) {
+	if(keysize > MAXKEYSIZE) {  //小于128的key是直接分配的，否则，bucket中实际存放的是key的指针
 		flags |= IndirectKey | CanFreeKey;
 		keysize = sizeof(byte*);
 	}
@@ -251,7 +255,7 @@ hash_init(MapType *t, Hmap *h, uint32 hint)
 		flags |= IndirectValue;
 		valuesize = sizeof(byte*);
 	}
-	bucketsize = offsetof(Bucket, data[0]) + (keysize + valuesize) * BUCKETSIZE;
+	bucketsize = offsetof(Bucket, data[0]) + (keysize + valuesize) * BUCKETSIZE; //这里是实际一个bucket的数据的大小
 
 	// invariants we depend on.  We should probably check these at compile time
 	// somewhere, but for now we'll do it here.
@@ -311,6 +315,9 @@ hash_init(MapType *t, Hmap *h, uint32 hint)
 // Moves entries in oldbuckets[i] to buckets[i] and buckets[i+2^k].
 // We leave the original bucket intact, except for the evacuated marks, so that
 // iterators can still iterate through the old buckets.
+// 将oldbuckets[i]移致bucket[i]或者buckets[i+2^k]，这是一个extendable hash的算法，桶的数目是2的整数倍，每次按原来的两倍扩容，则rehash之后
+// 要么还是在原位置，要么在它对称的位置。优点是扩容时只有一半的数据需要移动...有兴趣的同学可以去自行google
+// 移动过程中，并不改变旧的bucket，只是加上evacuated标记，因此遍历时仍然可以遍历旧的桶
 static void
 evacuate(MapType *t, Hmap *h, uintptr oldbucket)
 {
@@ -329,8 +336,9 @@ evacuate(MapType *t, Hmap *h, uintptr oldbucket)
 	b = (Bucket*)(h->oldbuckets + oldbucket * h->bucketsize);
 	newbit = (uintptr)1 << (h->B - 1);
 
-	if(!evacuated(b)) {
-		// TODO: reuse overflow buckets instead of using new ones, if there
+        //如果打上了evacuted标记，表示这个bucket已经移动到新的bucket了。这里只用管没打上evacuted标记的，将它们从oldbucket移到bucket
+	if(!evacuated(b)) { 
+		// TODO: reuse overflow buckets instead of using new ones, if there  可以改进的地方是重用bucket空间
 		// is no iterator using the old buckets.  (If CanFreeBuckets and !OldIterator.)
 
 		x = (Bucket*)(h->buckets + oldbucket * h->bucketsize);
@@ -344,6 +352,7 @@ evacuate(MapType *t, Hmap *h, uintptr oldbucket)
 		xv = xk + h->keysize * BUCKETSIZE;
 		yv = yk + h->keysize * BUCKETSIZE;
 		do {
+			// 下面的这个循环，遍历旧的bucket中的每一个 key/value数据，将每个旧的bucket搬到新的bucket的原位置或对称位置
 			for(i = 0, k = b->data, v = k + h->keysize * BUCKETSIZE; i < BUCKETSIZE; i++, k += h->keysize, v += h->valuesize) {
 				if(b->tophash[i] == 0)
 					continue;
@@ -352,8 +361,8 @@ evacuate(MapType *t, Hmap *h, uintptr oldbucket)
 				// NOTE: if key != key, then this hash could be (and probably will be)
 				// entirely different from the old hash.  We effectively only update
 				// the B'th bit of the hash in this case.
-				if((hash & newbit) == 0) {
-					if(xi == BUCKETSIZE) {
+				if((hash & newbit) == 0) {  //如果二倍扩容后，新引入的位是0，表示hash值没发生变化(x % 2^n == x % 2^(n+1))，复制到原位置
+					if(xi == BUCKETSIZE) { //将它后续的一块bucket构建出来备用
 						if(checkgc) mstats.next_gc = mstats.heap_alloc;
 						newx = runtime·mallocgc(h->bucketsize, 0, 1, 0);
 						clearbucket(newx);
@@ -377,7 +386,7 @@ evacuate(MapType *t, Hmap *h, uintptr oldbucket)
 					xi++;
 					xk += h->keysize;
 					xv += h->valuesize;
-				} else {
+				} else { //否则复制到对称位置
 					if(yi == BUCKETSIZE) {
 						if(checkgc) mstats.next_gc = mstats.heap_alloc;
 						newy = runtime·mallocgc(h->bucketsize, 0, 1, 0);
@@ -408,12 +417,18 @@ evacuate(MapType *t, Hmap *h, uintptr oldbucket)
 			// mark as evacuated so we don't do it again.
 			// this also tells any iterators that this data isn't golden anymore.
 			nextb = b->overflow;
-			b->overflow = (Bucket*)((uintptr)nextb + 1);
+
+			//这里为什么是(uintptr)nextb+1而不直接是(Bucket*)nextb呢？ 因为这里是将这个bucket打上了evacuate标记
+			//前面说到过这个技巧，指针值的低几位肯定是全0的，可以拿来存标记位。  相当于((Bucket*)nextb | 0x1)  0x1是evacuate标记
+			b->overflow = (Bucket*)((uintptr)nextb + 1); 
+			
 
 			b = nextb;
 		} while(b != nil);
 
 		// Free old overflow buckets as much as we can.
+		// 还是前面说过的，这里可以优化的，构建一个freelist，重用原来的bucket空间。不过很容易就能想明白作者为什么把它留到了TODO。
+		// 因为bucket的大小不一致，所以并不太好做....而在runtime.free这一层的内存管理层中其实是有内存池的实现的，只是回收到池子，不是真的free~~
 		if((h->flags & OldIterator) == 0) {
 			b = (Bucket*)(h->oldbuckets + oldbucket * h->bucketsize);
 			if((h->flags & CanFreeBucket) != 0) {
@@ -424,7 +439,7 @@ evacuate(MapType *t, Hmap *h, uintptr oldbucket)
 			} else {
 				// can't explicitly free overflow buckets, but at least
 				// we can unlink them.
-				b->overflow = (Bucket*)1;
+				b->overflow = (Bucket*)1; //是1而不是0是因为这是一个打上了evacuated标记的空指针
 			}
 		}
 	}
@@ -432,7 +447,7 @@ evacuate(MapType *t, Hmap *h, uintptr oldbucket)
 	// advance evacuation mark
 	if(oldbucket == h->nevacuate) {
 		h->nevacuate = oldbucket + 1;
-		if(oldbucket + 1 == newbit) { // newbit == # of oldbuckets
+		if(oldbucket + 1 == newbit) { // newbit == # of oldbuckets// 已经将oldbucket全移动到了新bucket了，做一些收尾工作
 			// free main bucket array
 			if((h->flags & (OldIterator | CanFreeBucket)) == CanFreeBucket) {
 				ob = h->oldbuckets;
@@ -478,7 +493,7 @@ hash_grow(MapType *t, Hmap *h)
 	if(checkgc) mstats.next_gc = mstats.heap_alloc;
 	new_buckets = runtime·mallocgc((uintptr)h->bucketsize << (h->B + 1), 0, 1, 0);
 	flags = (h->flags & ~(Iterator | OldIterator));
-	if((h->flags & Iterator) != 0) {
+	if((h->flags & Iterator) != 0) { //如果有正在访问hash表的，则旧表不能被释放掉，打上不能释放的flag
 		flags |= OldIterator;
 		// We can't free indirect keys any more, as
 		// they are potentially aliased across buckets.
@@ -493,7 +508,7 @@ hash_grow(MapType *t, Hmap *h)
 	h->nevacuate = 0;
 
 	// the actual copying of the hash table data is done incrementally
-	// by grow_work() and evacuate().
+	// by grow_work() and evacuate().扩容是一个增量的过程，实际上是由grow_work和evacuate完成的。
 	if(docheck)
 		check(t, h);
 }
