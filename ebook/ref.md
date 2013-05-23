@@ -7,3 +7,4 @@
  3. [调度器](http://www.douban.com/note/251142022/)
  4. [tcmalloc内存管理](http://shiningray.cn/tcmalloc-thread-caching-malloc.html)
  5. [Read Go-Map](http://totorow.herokuapp.com/posts/89c4f16464d202b124fcdef43d0aba40)
+ 6. [刑星的博客]http://www.mikespook.com/
