@@ -522,10 +522,12 @@ struct CgoMal
 #define	nelem(x)	(sizeof(x)/sizeof((x)[0]))
 #define	nil		((void*)0)
 #define	offsetof(s,m)	(uint32)(&(((s*)0)->m))
+// n字节对齐
 #define	ROUND(x, n)	(((x)+(n)-1)&~((n)-1)) /* all-caps to mark as macro: it evaluates n twice */
 
 /*
  * known to compiler
+ * 函数的返回值是对齐到sizeof(uintptr)的，这个数字一般用Strutrnd代替
  */
 enum {
 	Structrnd = sizeof(uintptr)
@@ -683,6 +685,7 @@ int32	runtime·charntorune(int32*, uint8*, int32);
 /*
  * very low level c-called
  */
+// USED定义是plan 9 C编译器提供的primitive，其作用是抑制编译器优化掉对*x的赋值
 #define FLUSH(x)	USED(x)
 
 void	runtime·gogo(Gobuf*, uintptr);

@@ -368,6 +368,7 @@ extern	char*	unsharp(char*);
 
 /* compiler directives on plan 9 */
 #define	SET(x)	((x)=0)
+//USED是plan9 c编译器自带的primitive，用于抑制编译器优化掉赋值
 #define	USED(x)	if(x){}else{}
 #ifdef __GNUC__
 #	if __GNUC__ >= 3
