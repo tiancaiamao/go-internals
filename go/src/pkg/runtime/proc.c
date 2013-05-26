@@ -1460,13 +1460,18 @@ runtime·malg(int32 stacksize)
 	return newg;
 }
 
-// Create a new g running fn with siz bytes of arguments.
-// Put it on the queue of g's waiting to run.
-// The compiler turns a go statement into a call to this.
+// 新建一个goroutine运行fn函数，args是函数fn的参数。
+// 将它放在g的waiting队列中等待运行
+// 编译器将go表达式编译成对它的调用，其实是个语法糖衣
+//	go f(args)
+// 等价于
+//	runtime.newproc(size, f, args)
+//
 // Cannot split the stack because it assumes that the arguments
 // are available sequentially after &fn; they would not be
 // copied if a stack split occurred.  It's OK for this to call
 // functions that split the stack.
+// 
 #pragma textflag 7
 void
 runtime·newproc(int32 siz, FuncVal* fn, ...)
