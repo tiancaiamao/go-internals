@@ -203,35 +203,38 @@ TEXT runtime·mcall(SB), 7, $0
 
 // Called during function prolog when more stack is needed.
 // Caller has already done get_tls(CX); MOVQ m(CX), BX.
+// 当函数需要更多栈空间时被调用，调用者已经执行过get_tls(CX); MOVQ m(CX), BX
+// 这个函数做的事情是，将调用者的调用者的pc,sp等信息记录下来。然后切换到g0中调用runtime.newstack
 TEXT runtime·morestack(SB),7,$0
-	// Cannot grow scheduler stack (m->g0).
+	// 调度器的栈m->g0是无法增长的
 	MOVQ	m_g0(BX), SI
 	CMPQ	g(CX), SI
 	JNE	2(PC)
-	INT	$3
+	INT	$3  //INT $3是什么来着的啊？好熟习的感觉
 	
-	MOVQ	DX, m_cret(BX)
+	MOVQ	DX, m_cret(BX) //BX是存的m结构体指针，m_cret(Bx)是m->cret，C的返回值。DX存的是
 
-	// Called from f.
-	// Set m->morebuf to f's caller.
+	// f是调用runtime.morestack的函数
+	// 将m->morebuf设置成f的调用者
 	MOVQ	8(SP), AX	// f's caller's PC
-	MOVQ	AX, (m_morebuf+gobuf_pc)(BX)
+	MOVQ	AX, (m_morebuf+gobuf_pc)(BX) //将f的调用者的PC记录到m->morebuf.pc
 	LEAQ	16(SP), AX	// f's caller's SP
-	MOVQ	AX, (m_morebuf+gobuf_sp)(BX)
-	MOVQ	AX, m_moreargp(BX)
+	MOVQ	AX, (m_morebuf+gobuf_sp)(BX) //将f的调用者的SP记录到m->morebuf.sp
+	MOVQ	AX, m_moreargp(BX) //morestack的参数
 	get_tls(CX)
-	MOVQ	g(CX), SI
-	MOVQ	SI, (m_morebuf+gobuf_g)(BX)
+	MOVQ	g(CX), SI //当前的g -> SI
+	MOVQ	SI, (m_morebuf+gobuf_g)(BX) //将当前的g记录到m->morebuf.g
 
 	// Set m->morepc to f's PC.
-	MOVQ	0(SP), AX
-	MOVQ	AX, m_morepc(BX)
+	MOVQ	0(SP), AX 
+	MOVQ	AX, m_morepc(BX) //将m->morepc设置为f的PC
 
 	// Call newstack on m->g0's stack.
+	// 切换到g0的栈，在g0的栈中调用newstack函数
 	MOVQ	m_g0(BX), BP
-	MOVQ	BP, g(CX)
-	MOVQ	(g_sched+gobuf_sp)(BP), SP
-	CALL	runtime·newstack(SB)
+	MOVQ	BP, g(CX) //将m->g0切换成当前g
+	MOVQ	(g_sched+gobuf_sp)(BP), SP //将m->g0->g_sched.gobuf_sp设置成当前的SP
+	CALL	runtime·newstack(SB) //调用newstack
 	MOVQ	$0, 0x1003	// crash if newstack returns
 	RET
 

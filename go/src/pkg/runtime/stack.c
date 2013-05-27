@@ -173,6 +173,9 @@ runtime·oldstack(void)
 // m->moreframesize bytes, copy m->moreargsize bytes to the new frame,
 // and then act as though runtime·lessstack called the function at
 // m->morepc.
+// 当需要一个新的栈段时调用，被reflect.call或者runtime.morestack调用
+// 分配一个足够大的新栈，至少大于m->moreframesize。将m->moreargsize字节复制到新的栈帧。
+// 然后伪装成在m->morepc处调用函数runtime.lessstack的样子。
 void
 runtime·newstack(void)
 {
@@ -189,11 +192,11 @@ runtime·newstack(void)
 	argsize = m->moreargsize;
 	gp = m->curg;
 
-	if(m->morebuf.sp < gp->stackguard - StackGuard) {
+	if(m->morebuf.sp < gp->stackguard - StackGuard) { //栈已经溢出
 		runtime·printf("runtime: split stack overflow: %p < %p\n", m->morebuf.sp, gp->stackguard - StackGuard);
 		runtime·throw("runtime: split stack overflow");
 	}
-	if(argsize % sizeof(uintptr) != 0) {
+	if(argsize % sizeof(uintptr) != 0) { //参数未对齐
 		runtime·printf("runtime: stack split with misaligned argsize %d\n", argsize);
 		runtime·throw("runtime: stack split argsize");
 	}
@@ -221,6 +224,7 @@ runtime·newstack(void)
 		free = 0;
 	} else {
 		// allocate new segment.
+		// framesize大小，必须包含参数大小部分，为调用runtime.morestack保留部分，并且至少大于StackMin。然后还要加上StackSystem部分
 		framesize += argsize;
 		framesize += StackExtra;	// room for more functions, Stktop.
 		if(framesize < StackMin)
@@ -238,10 +242,10 @@ runtime·newstack(void)
 
 	top->stackbase = (byte*)gp->stackbase;
 	top->stackguard = (byte*)gp->stackguard;
-	top->gobuf = m->morebuf;
-	top->argp = m->moreargp;
-	top->argsize = argsize;
-	top->free = free;
+	top->gobuf = m->morebuf; //只是借助m结构体临时传了一下参数，morebuf中记录的是栈空间不够的那个函数的pc,sp,g
+	top->argp = m->moreargp; //参数
+	top->argsize = argsize; //参数大小
+	top->free = free; //可用空间大小
 	m->moreargp = nil;
 	m->morebuf.pc = nil;
 	m->morebuf.sp = (uintptr)nil;
@@ -254,7 +258,7 @@ runtime·newstack(void)
 	gp->stackguard = (uintptr)stk + StackGuard;
 
 	sp = (byte*)top;
-	if(argsize > 0) {
+	if(argsize > 0) { //将参数移过来
 		sp -= argsize;
 		dst = (uintptr*)sp;
 		dstend = dst + argsize/sizeof(*dst);
@@ -262,7 +266,7 @@ runtime·newstack(void)
 		while(dst < dstend)
 			*dst++ = *src++;
 	}
-	if(thechar == '5') {
+	if(thechar == '5') { //编译器标识
 		// caller would have saved its LR below args.
 		sp -= sizeof(void*);
 		*(void**)sp = nil;
@@ -270,13 +274,14 @@ runtime·newstack(void)
 
 	// Continue as if lessstack had just called m->morepc
 	// (the PC that decided to grow the stack).
+	// 继续，伪装成好像是从m->morepc中调用lessstack函数的状态
 	label.sp = (uintptr)sp;
 	label.pc = (byte*)runtime·lessstack;
 	label.g = m->curg;
 	if(reflectcall)
 		runtime·gogocallfn(&label, (FuncVal*)m->morepc);
 	else
-		runtime·gogocall(&label, m->morepc, m->cret);
+		runtime·gogocall(&label, m->morepc, m->cret); //gogocall相当于一个直接的jmp，不是按函数协议跳转的
 
 	*(int32*)345 = 123;	// never return
 }
