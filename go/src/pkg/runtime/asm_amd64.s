@@ -122,7 +122,7 @@ TEXT runtime·gosave(SB), 7, $0
 	RET
 
 // void gogo(Gobuf*, uintptr)
-// restore state from Gobuf; longjmp
+// 从Gobuf中恢复上下文，相当于longjmp
 TEXT runtime·gogo(SB), 7, $0
 	MOVQ	16(SP), AX		// return 2nd arg
 	MOVQ	8(SP), BX		// gobuf
@@ -135,19 +135,21 @@ TEXT runtime·gogo(SB), 7, $0
 	JMP	BX
 
 // void gogocall(Gobuf*, void (*fn)(void), uintptr r0)
+// 从Gobuf中恢复状态，但是紧接着调用fn
 // restore state from Gobuf but then call fn.
+// 调用fn，fn返回时会返回到Gobuf保存的状态
 // (call fn, returning to state in Gobuf)
 TEXT runtime·gogocall(SB), 7, $0
-	MOVQ	24(SP), DX	// context
+	MOVQ	24(SP), DX	// context  第3个参数，实际上是m->cret
 	MOVQ	16(SP), AX		// fn
 	MOVQ	8(SP), BX		// gobuf
-	MOVQ	gobuf_g(BX), DI
+	MOVQ	gobuf_g(BX), DI	//gobuf->g
 	get_tls(CX)
-	MOVQ	DI, g(CX)
+	MOVQ	DI, g(CX)	//设置回之前的g...现在这个函数是在m->g0中调用的
 	MOVQ	0(DI), CX	// make sure g != nil
 	MOVQ	gobuf_sp(BX), SP	// restore SP
 	MOVQ	gobuf_pc(BX), BX
-	PUSHQ	BX
+	PUSHQ	BX	//SP在刚进入函数时是指向PC的。这里正好是这样，当函数返回时就会返回到之前的地方了
 	JMP	AX
 	POPQ	BX	// not reached
 
