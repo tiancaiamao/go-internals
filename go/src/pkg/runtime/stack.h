@@ -6,6 +6,10 @@
 Stack layout parameters.
 Included both by runtime (compiled via 6c) and linkers (compiled via gcc).
 
+每个goroutine的g->stackguard设置成指向栈底上面StackGuard的位置。
+每个函数会通过比较栈指针和g->stackguard检测栈溢出。
+对于那些只有很小栈帧的函数，为了减小检测的指令数目，可以允许栈越过stack guard下方StackSmall字节以内。
+使用较大栈的函数总是会检测栈溢出并调用morestack。
 The per-goroutine g->stackguard is set to point StackGuard bytes
 above the bottom of the stack.  Each function compares its stack
 pointer against g->stackguard to check for overflow.  To cut one

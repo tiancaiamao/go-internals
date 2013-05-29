@@ -135,10 +135,7 @@ TEXT runtime·gogo(SB), 7, $0
 	JMP	BX
 
 // void gogocall(Gobuf*, void (*fn)(void), uintptr r0)
-// 从Gobuf中恢复状态，但是紧接着调用fn
-// restore state from Gobuf but then call fn.
-// 调用fn，fn返回时会返回到Gobuf保存的状态
-// (call fn, returning to state in Gobuf)
+// 调用fn，从fn返回时会返回到Gobuf保存的状态
 TEXT runtime·gogocall(SB), 7, $0
 	MOVQ	24(SP), DX	// context  第3个参数，实际上是m->cret
 	MOVQ	16(SP), AX		// fn
@@ -147,7 +144,7 @@ TEXT runtime·gogocall(SB), 7, $0
 	get_tls(CX)
 	MOVQ	DI, g(CX)	//设置回之前的g...现在这个函数是在m->g0中调用的
 	MOVQ	0(DI), CX	// make sure g != nil
-	MOVQ	gobuf_sp(BX), SP	// restore SP
+	MOVQ	gobuf_sp(BX), SP	// 这下子改了SP才真正的切换到新栈中了
 	MOVQ	gobuf_pc(BX), BX
 	PUSHQ	BX	//SP在刚进入函数时是指向PC的。这里正好是这样，当函数返回时就会返回到之前的地方了
 	JMP	AX
@@ -208,11 +205,11 @@ TEXT runtime·mcall(SB), 7, $0
 // 当函数需要更多栈空间时被调用，调用者已经执行过get_tls(CX); MOVQ m(CX), BX
 // 这个函数做的事情是，将调用者的调用者的pc,sp等信息记录下来。然后切换到g0中调用runtime.newstack
 TEXT runtime·morestack(SB),7,$0
-	// 调度器的栈m->g0是无法增长的
+	// 调度器的栈m->g0是无法增长的，下面几条指令是确保当前goroutine不是m->g0
 	MOVQ	m_g0(BX), SI
 	CMPQ	g(CX), SI
 	JNE	2(PC)
-	INT	$3  //INT $3是什么来着的啊？好熟习的感觉
+	INT	$3  //INT $3是留给调试器的中断号
 	
 	MOVQ	DX, m_cret(BX) //BX是存的m结构体指针，m_cret(Bx)是m->cret，C的返回值。DX存的是
 
@@ -284,12 +281,12 @@ TEXT reflect·call(SB), 7, $0
 
 // Return point when leaving stack.
 TEXT runtime·lessstack(SB), 7, $0
-	// Save return value in m->cret
+	// 保存返回值到m->cret
 	get_tls(CX)
 	MOVQ	m(CX), BX
 	MOVQ	AX, m_cret(BX)
 
-	// Call oldstack on m->g0's stack.
+	// 在m->g0中调用oldstack函数
 	MOVQ	m_g0(BX), BP
 	MOVQ	BP, g(CX)
 	MOVQ	(g_sched+gobuf_sp)(BP), SP

@@ -223,7 +223,7 @@ runtime·newstack(void)
 		stk = (byte*)gp->stackguard - StackGuard;
 		free = 0;
 	} else {
-		// allocate new segment.
+		// 分配新空间
 		// framesize大小，必须包含参数大小部分，为调用runtime.morestack保留部分，并且至少大于StackMin。然后还要加上StackSystem部分
 		framesize += argsize;
 		framesize += StackExtra;	// room for more functions, Stktop.
@@ -231,7 +231,7 @@ runtime·newstack(void)
 			framesize = StackMin;
 		framesize += StackSystem;
 		stk = runtime·stackalloc(framesize);
-		top = (Stktop*)(stk+framesize-sizeof(*top));
+		top = (Stktop*)(stk+framesize-sizeof(*top)); 
 		free = framesize;
 	}
 
@@ -240,8 +240,9 @@ runtime·newstack(void)
 			framesize, argsize, m->morepc, m->moreargp, m->morebuf.pc, m->morebuf.sp, top, gp->stackbase);
 	}
 
+	//将一些重要信息从结构体g中移到栈顶Stktop中
 	top->stackbase = (byte*)gp->stackbase;
-	top->stackguard = (byte*)gp->stackguard;
+	top->stackguard = (byte*)gp->stackguard; 
 	top->gobuf = m->morebuf; //只是借助m结构体临时传了一下参数，morebuf中记录的是栈空间不够的那个函数的pc,sp,g
 	top->argp = m->moreargp; //参数
 	top->argsize = argsize; //参数大小
@@ -255,8 +256,9 @@ runtime·newstack(void)
 	gp->ispanic = false;
 
 	gp->stackbase = (uintptr)top;
-	gp->stackguard = (uintptr)stk + StackGuard;
+	gp->stackguard = (uintptr)stk + StackGuard; //每个goroutine的g->stackguard设置成指向栈底上面StackGuard的位置。
 
+	//装饰栈顶的参数区域
 	sp = (byte*)top;
 	if(argsize > 0) { //将参数移过来
 		sp -= argsize;
@@ -275,6 +277,7 @@ runtime·newstack(void)
 	// Continue as if lessstack had just called m->morepc
 	// (the PC that decided to grow the stack).
 	// 继续，伪装成好像是从m->morepc中调用lessstack函数的状态
+	// 跳转
 	label.sp = (uintptr)sp;
 	label.pc = (byte*)runtime·lessstack;
 	label.g = m->curg;
