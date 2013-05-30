@@ -117,7 +117,6 @@ static void injectglist(G*);
 //	make & queue new G
 //	call runtime·mstart
 //
-// The new G calls runtime·main.
 void
 runtime·schedinit(void)
 {
@@ -129,7 +128,8 @@ runtime·schedinit(void)
 	runtime·mallocinit();
 	mcommoninit(m);
 
-	runtime·goargs();
+        //在asm_amd64.s中将argc,argv保存到了static全局变量的，这里分配os.Args的空间，将它们复制过去。
+	runtime·goargs(); 
 	runtime·goenvs();
 
 	// For debugging:
@@ -138,6 +138,7 @@ runtime·schedinit(void)
 	// runtime·findfunc(0);
 
 	runtime·sched.lastpoll = runtime·nanotime();
+	//以下根据环境变量GOMAXPROCS获取使用的process
 	procs = 1;
 	p = runtime·getenv("GOMAXPROCS");
 	if(p != nil && (n = runtime·atoi(p)) > 0) {
@@ -146,7 +147,7 @@ runtime·schedinit(void)
 		procs = n;
 	}
 	runtime·allp = runtime·malloc((MaxGomaxprocs+1)*sizeof(runtime·allp[0]));
-	procresize(procs);
+	procresize(procs); //设置procs
 
 	mstats.enablegc = 1;
 	m->nomemprof--;

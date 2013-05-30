@@ -5,9 +5,10 @@
 #include "zasm_GOOS_GOARCH.h"
 
 TEXT _rt0_amd64(SB),7,$-8
+	// 处理跟参数相关的
 	// copy arguments forward on an even stack
-	MOVQ	DI, AX		// argc
-	MOVQ	SI, BX		// argv
+	MOVQ	DI, AX		// DI是argc
+	MOVQ	SI, BX		// SI是argv
 	SUBQ	$(4*8+7), SP		// 2args 2auto
 	ANDQ	$~15, SP
 	MOVQ	AX, 16(SP)
@@ -17,10 +18,10 @@ TEXT _rt0_amd64(SB),7,$-8
 	// _cgo_init may update stackguard.
 	MOVQ	$runtime·g0(SB), DI
 	LEAQ	(-64*1024+104)(SP), BX
-	MOVQ	BX, g_stackguard(DI)
-	MOVQ	SP, g_stackbase(DI)
+	MOVQ	BX, g_stackguard(DI) //stackguard设置为SP往下大约64K的地方
+	MOVQ	SP, g_stackbase(DI) //stackbase设置为SP
 
-	// find out information about the processor we're on
+	// 获取当前处理器信息
 	MOVQ	$0, AX
 	CPUID
 	CMPQ	AX, $0
@@ -48,10 +49,10 @@ needtls:
 	JEQ ok
 
 	LEAQ	runtime·tls0(SB), DI
-	CALL	runtime·settls(SB)
+	CALL	runtime·settls(SB) //这里就是对操作系统的系统调用，在文件sys_xxx_amd64.s中。设置线程局部存储
 
 	// store through it, to make sure it works
-	get_tls(BX)
+	get_tls(BX) //编译器提供的指令，在amd64非window和plan9架构下，好像为空
 	MOVQ	$0x123, g(BX)
 	MOVQ	runtime·tls0(SB), AX
 	CMPQ	AX, $0x123
@@ -59,6 +60,7 @@ needtls:
 	MOVL	AX, 0	// abort
 ok:
 	// set the per-goroutine and per-mach "registers"
+	// 设置每个goroutine和每个machine的寄存器
 	get_tls(BX)
 	LEAQ	runtime·g0(SB), CX
 	MOVQ	CX, g(BX)
@@ -66,21 +68,21 @@ ok:
 	MOVQ	AX, m(BX)
 
 	// save m->g0 = g0
-	MOVQ	CX, m_g0(AX)
+	MOVQ	CX, m_g0(AX) //AX是m，CX是g0
 
 	CLD				// convention is D is always left cleared
-	CALL	runtime·check(SB)
+	CALL	runtime·check(SB) //检测像int8,int16,float等是否是预期的大小，检测cas操作是否正常
 
 	MOVL	16(SP), AX		// copy argc
 	MOVL	AX, 0(SP)
 	MOVQ	24(SP), AX		// copy argv
 	MOVQ	AX, 8(SP)
-	CALL	runtime·args(SB)
-	CALL	runtime·osinit(SB)
-	CALL	runtime·hashinit(SB)
-	CALL	runtime·schedinit(SB)
+	CALL	runtime·args(SB)	//将argc,argv设置到static全局变量中了
+	CALL	runtime·osinit(SB)	//osinit做的事情就是设置runtime.ncpu，不同平台实现方式不一样
+	CALL	runtime·hashinit(SB)	//使用读/dev/urandom的方式从内核获得随机数种子
+	CALL	runtime·schedinit(SB)	//内存管理初始化，根据GOMAXPROCS设置使用的procs等等
 
-	// create a new goroutine to start program
+	// 新建一个G，当它运行时会调用main.main
 	PUSHQ	$runtime·main·f(SB)		// entry
 	PUSHQ	$0			// arg size
 	CALL	runtime·newproc(SB)
