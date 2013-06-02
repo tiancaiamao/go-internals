@@ -49,7 +49,7 @@ needtls:
 	JEQ ok
 
 	LEAQ	runtime·tls0(SB), DI
-	CALL	runtime·settls(SB) //这里就是对操作系统的系统调用，在文件sys_xxx_amd64.s中。设置线程局部存储
+	CALL	runtime·settls(SB) //这里就是对操作系统的系统调用，在文件sys_xxx_amd64.s中。设置本地线程存储
 
 	// store through it, to make sure it works
 	get_tls(BX) //编译器提供的指令，在amd64非window和plan9架构下，好像为空
