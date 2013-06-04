@@ -66,7 +66,7 @@ struct Sched {
 	int32 mwait;	// number of m's waiting for work
 	int32 mcount;	// number of m's that have been created
 
-	volatile uint32 atomic;	// atomic scheduling word (see below)
+	volatile uint32 atomic;	// è°ƒåº¦å™¨ä¸­çš„åŸå­å­—æ®µã€‚æ³¨æ„è¿™ä¸ªvolatile
 
 	int32 profilehz;	// cpu profiling rate
 
@@ -78,12 +78,20 @@ struct Sched {
 
 // The atomic word in sched is an atomic uint32 that
 // holds these fields.
-//
+// schedä¸­çš„åŸå­å­—æ®µæ˜¯ä¸€ä¸ªåŸå­çš„uint32ï¼Œå­˜æ”¾ä¸‹åˆ—åŸŸ
+// 15ä½ mcpu  --æ­£åœ¨å ç”¨cpuè¿è¡Œçš„mæ•°é‡ (è¿›å…¥syscallçš„mæ˜¯ä¸å ç”¨cpuçš„)
+// 15ä½ mcpumax  --æœ€å¤§å…è®¸è¿™ä¹ˆå¤šä¸ªmåŒæ—¶ä½¿ç”¨cpu
+// 1ä½  waitstop  --æœ‰gç­‰å¾…ç»“æŸ
+// 1ä½  gwaiting  --ç­‰å¾…é˜Ÿåˆ—ä¸ä¸ºç©ºï¼Œæœ‰gå¤„äºwaitingçŠ¶æ€
 //	[15 bits] mcpu		number of m's executing on cpu
 //	[15 bits] mcpumax	max number of m's allowed on cpu
 //	[1 bit] waitstop	some g is waiting on stopped
 //	[1 bit] gwaiting	gwait != 0
 //
+// è¿™äº›ä¿¡æ¯æ˜¯è¿›è¡Œç³»ç»Ÿè°ƒç”¨å’Œå‡ºç³»ç»Ÿè°ƒç”¨æ—¶éœ€è¦ç”¨åˆ°çš„ï¼Œå®ƒä¼šå†³å®šæ˜¯å¦éœ€è¦è¿›å…¥åˆ°è°ƒåº¦å™¨å±‚é¢ã€‚
+// å°†å®ƒä»¬æ‰“åŒ…æˆä¸€ä¸ªå­—èŠ‚ä½¿å¾—å¯ä»¥é€šè¿‡ä¸€æ¬¡åŸå­è¯»å†™è·å–å®ƒä»¬è€Œä¸ç”¨åŠ é”ã€‚
+// è¿™å°†æå¤§çš„å‡å°‘é‚£äº›å¤§é‡ä½¿ç”¨ç³»ç»Ÿè°ƒç”¨æˆ–è€…cgoçš„å¤šçº¿ç¨‹ç¨‹åºçš„contention
+
 // These fields are the information needed by entersyscall
 // and exitsyscall to decide whether to coordinate with the
 // scheduler.  Packing them into a single machine word lets
@@ -91,12 +99,16 @@ struct Sched {
 // no lock/unlock.  This greatly reduces contention in
 // syscall- or cgo-heavy multithreaded programs.
 //
+// é™¤äº†è¿›å‡ºç³»ç»Ÿè°ƒç”¨ä»¥å¤–ï¼Œæ“ä½œè¿™äº›åŸŸåªä¼šå‘ç”ŸäºæŒæœ‰è°ƒåº¦å™¨é”çš„æ—¶å€™ï¼Œå› æ­¤
+// goroutinesä¸ç”¨æ‹…å¿ƒå…¶å®ƒgoroutineä¼šå¯¹è¿™äº›å­—æ®µè¿›è¡Œæ“ä½œã€‚
 // Except for entersyscall and exitsyscall, the manipulations
 // to these fields only happen while holding the schedlock,
 // so the routines holding schedlock only need to worry about
 // what entersyscall and exitsyscall do, not the other routines
 // (which also use the schedlock).
 //
+// ç‰¹åˆ«æ˜¯ï¼Œè¿›å‡ºç³»ç»Ÿè°ƒç”¨åªä¼šè¯»mcpumaxï¼Œwaitstopå’Œgwaitingã€‚å†³ä¸ä¼šå†™ä»–ä»¬ã€‚
+// å› æ­¤ï¼Œ(æŒæœ‰è°ƒåº¦å™¨é”)å†™è¿™äº›åŸŸæ—¶å®Œå…¨ä¸ç”¨æ‹…å¿ƒä¼šå‘ç”Ÿå†™å†²çªã€‚
 // In particular, entersyscall and exitsyscall only read mcpumax,
 // waitstop, and gwaiting.  They never write them.  Thus, writes to those
 // fields can be done (holding schedlock) without fear of write conflicts.
@@ -135,6 +147,8 @@ static bool canaddmcpu(void);
 // minimize the number of times we call notewakeup while the scheduler
 // lock is held, since the m will normally move quickly to lock the
 // scheduler itself, producing lock contention.
+// æœ‰æŸä¸ªmç­‰å¾…notewakeup(&m->havenextg)ã€‚åªæœ‰åœ¨è°ƒåº¦å™¨é”ä½æ—¶æ‰å¯ä»¥è®¿é—®ï¼Œ
+// å› ä¸ºmä¸€èˆ¬ä¼šå¾ˆå¿«é”å¾€è°ƒåº¦å™¨æœ¬èº«ï¼Œå¯¼è‡´é”å½¢æˆç¯ã€‚
 static M* mwakeup;
 
 // Scheduling helpers.  Sched must be locked.
@@ -149,6 +163,8 @@ static void readylocked(G*);	// ready, but sched is locked
 static void mnextg(M*, G*);
 static void mcommoninit(M*);
 
+
+// ç”¨casæ“ä½œå»è®¾ç½®sched.automicåŸå­å­—æ®µä¸­çš„mcpumaxåŸŸ
 void
 setmcpumax(uint32 n)
 {
@@ -167,14 +183,14 @@ setmcpumax(uint32 n)
 // Keep trace of scavenger's goroutine for deadlock detection.
 static G *scvg;
 
-// The bootstrap sequence is:
+// bootstrapçš„é¡ºåºæ˜¯ï¼š
 //
 //	call osinit
 //	call schedinit
 //	make & queue new G
 //	call runtime.mstart
 //
-// The new G calls runtime.main.
+// æ–°å»ºä¸€ä¸ªGï¼Œå½“å®ƒè¿è¡Œæ—¶ä¼šè°ƒç”¨runtime.main
 void
 runtime.schedinit(void)
 {
@@ -200,12 +216,13 @@ runtime.schedinit(void)
 			n = maxgomaxprocs;
 		runtime.gomaxprocs = n;
 	}
-	// wait for the main goroutine to start before taking
-	// GOMAXPROCS into account.
+
+	// åœ¨è€ƒè™‘ GOMAXPROCSä¹‹å‰ï¼Œå…ˆç­‰å¾…main goroutineå¯åŠ¨ã€‚
+	// åœ¨åé¢runtime.mainä¸­æ‰å°†mcpumaxè®¾ç½®ä¸ºruntime.gomaxprocsçš„
 	setmcpumax(1);
 	runtime.singleproc = runtime.gomaxprocs == 1;
 
-	canaddmcpu();	// mcpu++ to account for bootstrap m
+	canaddmcpu();	// ä¸ºboostrapçš„måšmcpu++
 	m->helpgc = 1;	// flag to tell schedule() to mcpu--
 	runtime.sched.grunning++;
 
@@ -220,16 +237,15 @@ extern void main.main(void);
 void
 runtime.main(void)
 {
-	// Lock the main goroutine onto this, the main OS thread,
-	// during initialization.  Most programs won't care, but a few
-	// do require certain calls to be made by the main thread.
-	// Those can arrange for main.main to run in the main thread
-	// by calling runtime.LockOSThread during initialization
-	// to preserve the lock.
+	// åœ¨åˆå§‹åŒ–æ—¶ï¼Œå°†main goroutineé”å®šåˆ°mainç³»ç»Ÿçº¿ç¨‹
+	// å¤§éƒ¨åˆ†çš„ç¨‹åºéƒ½ä¸åœ¨ä¹ï¼Œä½†æ˜¯æœ‰ä¸€äº›æ˜¯éœ€è¦åœ¨mainçº¿ç¨‹ä¸­è°ƒç”¨çš„ã€‚
+	// å®ƒä»¬å¯ä»¥é€šè¿‡åœ¨åˆå§‹åŒ–æ—¶è°ƒç”¨runtime.LockOSThreadå®‰æ’main.mainè¿è¡Œåœ¨mainçº¿ç¨‹ä¸­
 	runtime.LockOSThread();
-	// From now on, newgoroutines may use non-main threads.
+	// ä»ç°åœ¨èµ·ï¼Œæ–°çš„goroutineå¯ä»¥ä½¿ç”¨éä¸»çº¿ç¨‹
 	setmcpumax(runtime.gomaxprocs);
 	runtime.sched.init = true;
+
+	// æ–°å»ºåƒåœ¾å›æ”¶çš„goroutine
 	scvg = runtime.newproc1((byte*)runtime.MHeap_Scavenger, nil, 0, 0, runtime.main);
 	main.init();
 	runtime.sched.init = false;
@@ -475,8 +491,8 @@ runtime.ready(G *g)
 // Mark g ready to run.  Sched is already locked.
 // G might be running already and about to stop.
 // The sched lock protects g->status from changing underfoot.
-/* ´Óº¯ÊıÃû¾Í¿ÉÒÔ¿´³ö,Ëü¸ÉµÄÊÂÇéÊÇ,°Ñg±ä³ÉGrunnableµÄ,¹ÒÔÚ¾ÍĞ÷¶ÓÁĞ
-   ÒªÇóµ÷ÓÃº¯ÊıÇ°µ÷¶ÈÆ÷ÊÇËø×ÅµÄ,ËùÒÔ½Ğreadylocked
+/* Â´Ã“ÂºÂ¯ÃŠÃ½ÃƒÃ»Â¾ÃÂ¿Ã‰Ã’Ã”Â¿Â´Â³Ã¶,Ã‹Ã¼Â¸Ã‰ÂµÃ„ÃŠÃ‚Ã‡Ã©ÃŠÃ‡,Â°Ã‘gÂ±Ã¤Â³Ã‰GrunnableÂµÃ„,Â¹Ã’Ã”ÃšÂ¾ÃÃÃ·Â¶Ã“ÃÃ
+   Ã’ÂªÃ‡Ã³ÂµÃ·Ã“ÃƒÂºÂ¯ÃŠÃ½Ã‡Â°ÂµÃ·Â¶ÃˆÃ†Ã·ÃŠÃ‡Ã‹Ã¸Ã—Ã…ÂµÃ„,Ã‹Ã¹Ã’Ã”Â½Ãreadylocked
  */
 static void
 readylocked(G *g)
@@ -533,8 +549,8 @@ mnextg(M *m, G *g)
 // Sched must be locked on entry, is unlocked on exit.
 // Makes sure that at most $GOMAXPROCS g's are
 // running on cpus (not in system calls) at any given time.
-/* ×î¶àÍ¬Ê±Ö»ÓĞGOMAXPROCS¸ögÕıÔÚÔËĞĞ,´¦ÓÚÏµÍ³µ÷ÓÃµÄ²»Ëã
-   Õû¸öº¯Êı¾ÍÊÇ·µ»Øm->nextg,¼´ÏÂÒ»¸ö´ıÔËĞĞµÄgoroutine
+/* Ã—Ã®Â¶Ã ÃÂ¬ÃŠÂ±Ã–Â»Ã“ÃGOMAXPROCSÂ¸Ã¶gÃ•Ã½Ã”ÃšÃ”Ã‹ÃÃ,Â´Â¦Ã“ÃšÃÂµÃÂ³ÂµÃ·Ã“ÃƒÂµÃ„Â²Â»Ã‹Ã£
+   Ã•Ã»Â¸Ã¶ÂºÂ¯ÃŠÃ½Â¾ÃÃŠÃ‡Â·ÂµÂ»Ã˜m->nextg,Â¼Â´ÃÃ‚Ã’Â»Â¸Ã¶Â´Ã½Ã”Ã‹ÃÃÂµÃ„goroutine
  */
 static G*
 nextgandunlock(void)
@@ -548,7 +564,7 @@ top:
 
 	// If there is a g waiting as m->nextg, the mcpu++
 	// happened before it was passed to mnextg.
-	/* Èç¹ûµ±Ç°µÄmÖĞÓĞÕıÔÚµÈ´ı´¦ÀíµÄg,Ôò´¦Àí¸Ãg
+	/* ÃˆÃ§Â¹Ã»ÂµÂ±Ã‡Â°ÂµÃ„mÃ–ÃÃ“ÃÃ•Ã½Ã”ÃšÂµÃˆÂ´Ã½Â´Â¦Ã€Ã­ÂµÃ„g,Ã”Ã²Â´Â¦Ã€Ã­Â¸Ãƒg
 	 */
 	if(m->nextg != nil) {
 		gp = m->nextg;
@@ -562,7 +578,7 @@ top:
 		// Make sure some other cpu is running to handle
 		// the ordinary run queue.
 		if(runtime.sched.gwait != 0) {
-			matchmg(); /* Ö»ÒªmÊıÁ¿Ã»µ½ÉÏÏŞ,ÇÒ¾ÍĞ÷¶ÓÁĞÖĞÓĞg,¾ÍÄÃÒ»¸öm°ó¶¨Ò»¸ög */
+			matchmg(); /* Ã–Â»Ã’ÂªmÃŠÃ½ÃÂ¿ÃƒÂ»ÂµÂ½Ã‰ÃÃÃ,Ã‡Ã’Â¾ÃÃÃ·Â¶Ã“ÃÃÃ–ÃÃ“Ãg,Â¾ÃÃ„ÃƒÃ’Â»Â¸Ã¶mÂ°Ã³Â¶Â¨Ã’Â»Â¸Ã¶g */
 			// m->lockedg might have been on the queue.
 			if(m->nextg != nil) {
 				gp = m->nextg;
@@ -594,14 +610,14 @@ top:
 		// invalidate the decision to end the loop.
 		//
 		// We hold the sched lock, so no one else is manipulating the
-		// g queue or changing mcpumax.  Entersyscall can decrement ½øÈëÏµÍ³µ÷ÓÃ»á¼õÉÙmcpu
+		// g queue or changing mcpumax.  Entersyscall can decrement Â½Ã¸ÃˆÃ«ÃÂµÃÂ³ÂµÃ·Ã“ÃƒÂ»Ã¡Â¼ÃµÃ‰Ã™mcpu
 		// mcpu, but if does so when there is something on the g queue,
 		// the gwait bit will be set, so entersyscall will take the slow path
 		// and use the sched lock.  So it cannot invalidate our decision.
 		//
 		// Wait on global m queue.
-                /* ¾ÍĞ÷g¶ÓÁĞÖĞ¶¼Ã»ÓĞÁË»òÕß²»ÄÜ¼ÓmcpuÁË,Ôò°Ñm·Åµ½¶ÓÁĞÖĞ
-		   ºóÃæÔÙ·ÖÅäm,¼´newmº¯ÊıÖĞ,»áÏÈ´Ó¶ÓÁĞÄÃ.Ã»ÓĞ²Å»áÔÙ·ÖÅä
+                /* Â¾ÃÃÃ·gÂ¶Ã“ÃÃÃ–ÃÂ¶Â¼ÃƒÂ»Ã“ÃÃÃ‹Â»Ã²Ã•ÃŸÂ²Â»Ã„ÃœÂ¼Ã“mcpuÃÃ‹,Ã”Ã²Â°Ã‘mÂ·Ã…ÂµÂ½Â¶Ã“ÃÃÃ–Ã
+		   ÂºÃ³ÃƒÃ¦Ã”Ã™Â·Ã–Ã…Ã¤m,Â¼Â´newmÂºÂ¯ÃŠÃ½Ã–Ã,Â»Ã¡ÃÃˆÂ´Ã“Â¶Ã“ÃÃÃ„Ãƒ.ÃƒÂ»Ã“ÃÂ²Ã…Â»Ã¡Ã”Ã™Â·Ã–Ã…Ã¤
 		 */
 		mput(m); 
 	}
@@ -754,10 +770,10 @@ runtime.starttheworld(bool extra)
 void
 runtime.mstart(void)
 {
-	/* mstartÊÇruntime.newosprocĞÂ½¨µÄÏß³ÌµÄÈë¿ÚµØÖ·
-	   ĞÂÏß³ÌÖ´ĞĞÊ±»á´ÓÕâÀï¿ªÊ¼ÔËĞĞ
-	   ×¢ÒâÔÚruntime.newosprocÖĞ´«¹ıÀ´Ê±,²ÎÊı¾ÍÊÇg0ºÍg0µÄÕ»
-	   ²¢²»ÊÇĞÂ½¨goroutineµÄg!
+	/* mstartÃŠÃ‡runtime.newosprocÃÃ‚Â½Â¨ÂµÃ„ÃÃŸÂ³ÃŒÂµÃ„ÃˆÃ«Â¿ÃšÂµÃ˜Ã–Â·
+	   ÃÃ‚ÃÃŸÂ³ÃŒÃ–Â´ÃÃÃŠÂ±Â»Ã¡Â´Ã“Ã•Ã¢Ã€Ã¯Â¿ÂªÃŠÂ¼Ã”Ã‹ÃÃ
+	   Ã—Â¢Ã’Ã¢Ã”Ãšruntime.newosprocÃ–ÃÂ´Â«Â¹Ã½Ã€Â´ÃŠÂ±,Â²ÃÃŠÃ½Â¾ÃÃŠÃ‡g0ÂºÃg0ÂµÃ„Ã•Â»
+	   Â²Â¢Â²Â»ÃŠÃ‡ÃÃ‚Â½Â¨goroutineÂµÃ„g!
 	 */
 	if(g != m->g0)
 		runtime.throw("bad runtime.mstart");
@@ -765,21 +781,21 @@ runtime.mstart(void)
 	// Record top of stack for use by mcall.
 	// Once we call schedule we're never coming back,
 	// so other calls can reuse this stack space.
-	/* ¼ÇÂ¼ÏÂÕ»¶¥¹©mcallÊ¹ÓÃ.
-	   Ò»µ©µ÷ÓÃÁËscheduleº¯Êı,schedule²»»á¼ÌĞøÊ¹ÓÃÕâ¸öÕ»(schedule²»ÊÇÆÕÍ¨µÄÕ»µ÷ÓÃ·½Ê½,±»µ÷Õß¼ÌĞøÊ¹ÓÃµ÷ÓÃÕßÕ»µÄÏÂÃæµÄµØÖ·¿Õ¼ä)
-	   Òò´ËÆäËüµ÷ÓÃ¿ÉÒÔÖØÓÃÕâ¸öÕ»µØÖ·¿Õ¼ä
+	/* Â¼Ã‡Ã‚Â¼ÃÃ‚Ã•Â»Â¶Â¥Â¹Â©mcallÃŠÂ¹Ã“Ãƒ.
+	   Ã’Â»ÂµÂ©ÂµÃ·Ã“ÃƒÃÃ‹scheduleÂºÂ¯ÃŠÃ½,scheduleÂ²Â»Â»Ã¡Â¼ÃŒÃÃ¸ÃŠÂ¹Ã“ÃƒÃ•Ã¢Â¸Ã¶Ã•Â»(scheduleÂ²Â»ÃŠÃ‡Ã†Ã•ÃÂ¨ÂµÃ„Ã•Â»ÂµÃ·Ã“ÃƒÂ·Â½ÃŠÂ½,Â±Â»ÂµÃ·Ã•ÃŸÂ¼ÃŒÃÃ¸ÃŠÂ¹Ã“ÃƒÂµÃ·Ã“ÃƒÃ•ÃŸÃ•Â»ÂµÃ„ÃÃ‚ÃƒÃ¦ÂµÃ„ÂµÃ˜Ã–Â·Â¿Ã•Â¼Ã¤)
+	   Ã’Ã²Â´Ã‹Ã†Ã¤Ã‹Ã¼ÂµÃ·Ã“ÃƒÂ¿Ã‰Ã’Ã”Ã–Ã˜Ã“ÃƒÃ•Ã¢Â¸Ã¶Ã•Â»ÂµÃ˜Ã–Â·Â¿Ã•Â¼Ã¤
 	 */
 	runtime.gosave(&m->g0->sched);
 	m->g0->sched.pc = (void*)-1;  // make sure it is never used
 	runtime.asminit();
-	runtime.minit(); /* ÎªĞÅºÅ´¦Àí½¨Á¢ÁË×¨ÃÅµÄG½á¹¹Ìå */
+	runtime.minit(); /* ÃÂªÃÃ…ÂºÃ…Â´Â¦Ã€Ã­Â½Â¨ÃÂ¢ÃÃ‹Ã—Â¨ÃƒÃ…ÂµÃ„GÂ½Ã¡Â¹Â¹ÃŒÃ¥ */
 
 	// Install signal handlers; after minit so that minit can
 	// prepare the thread to be able to handle the signals.
 	if(m == &runtime.m0)
 		runtime.initsig();
 
-	schedule(nil); /* ²»»á·µ»Ø */
+	schedule(nil); /* Â²Â»Â»Ã¡Â·ÂµÂ»Ã˜ */
 }
 
 // When running with cgo, we call libcgo_thread_start
@@ -797,7 +813,7 @@ struct CgoThreadStart
 
 // Kick off new m's as needed (up to mcpumax).
 // Sched is locked.
-/* Õâ¸öº¯Êı¾ÍÊÇ×ö¸öÆ¥Åä,Ö»ÒªmÃ»ÓĞÍ»ÆÆÉÏÏŞ,¾ÍĞ÷¶ÓÁĞÖĞ»¹ÓĞg,¾ÍÓÃÒ»¸ömÔËĞĞÒ»¸ög */
+/* Ã•Ã¢Â¸Ã¶ÂºÂ¯ÃŠÃ½Â¾ÃÃŠÃ‡Ã—Ã¶Â¸Ã¶Ã†Â¥Ã…Ã¤,Ã–Â»Ã’ÂªmÃƒÂ»Ã“ÃÃÂ»Ã†Ã†Ã‰ÃÃÃ,Â¾ÃÃÃ·Â¶Ã“ÃÃÃ–ÃÂ»Â¹Ã“Ãg,Â¾ÃÃ“ÃƒÃ’Â»Â¸Ã¶mÃ”Ã‹ÃÃÃ’Â»Â¸Ã¶g */
 static void
 matchmg(void)
 {
@@ -806,23 +822,23 @@ matchmg(void)
 
 	if(m->mallocing || m->gcing)
 		return;
-	/* Ö»Òª¾ÍĞ÷¶ÓÁĞÖĞÓĞg,²¢ÇÒ¿ÉÔËĞĞµÄmÊıÃ»ÓĞµ½ÉÏÏŞ */
+	/* Ã–Â»Ã’ÂªÂ¾ÃÃÃ·Â¶Ã“ÃÃÃ–ÃÃ“Ãg,Â²Â¢Ã‡Ã’Â¿Ã‰Ã”Ã‹ÃÃÂµÃ„mÃŠÃ½ÃƒÂ»Ã“ÃÂµÂ½Ã‰ÃÃÃ */
 	while(haveg() && canaddmcpu()) {
 		gp = gget();
 		if(gp == nil)
 			runtime.throw("gget inconsistency");
 
 		// Find the m that will run gp.
-		if((mp = mget(gp)) == nil)  //mµÄwaiting¶ÓÁĞÖĞÓĞ¾ÍÖ±½ÓÄÃ,Ã»ÓĞ¾ÍĞÂ½¨
+		if((mp = mget(gp)) == nil)  //mÂµÃ„waitingÂ¶Ã“ÃÃÃ–ÃÃ“ÃÂ¾ÃÃ–Â±Â½Ã“Ã„Ãƒ,ÃƒÂ»Ã“ÃÂ¾ÃÃÃ‚Â½Â¨
 			mp = runtime.newm();
 		mnextg(mp, gp);
 	}
 }
 
 // Create a new m.  It will start off with a call to runtime.mstart.
-/* ÆäÊµ¾ÍÊÇĞÂ½¨Ò»¸ö²Ù×÷ÏµÍ³Ïß³Ì,Ïß³ÌµÄÈë¿ÚµãÊÇmstart
-   µ÷¶ÈÆ÷»á½«Õâ¸ömachineºÍÄ³¸ögoroutine°ó¶¨(matchmg)
-   mstart»á»Øµ÷¶ÔÓ¦µÄgoroutineµÄÉÏÏÂÎÄ
+/* Ã†Ã¤ÃŠÂµÂ¾ÃÃŠÃ‡ÃÃ‚Â½Â¨Ã’Â»Â¸Ã¶Â²Ã™Ã—Ã·ÃÂµÃÂ³ÃÃŸÂ³ÃŒ,ÃÃŸÂ³ÃŒÂµÃ„ÃˆÃ«Â¿ÃšÂµÃ£ÃŠÃ‡mstart
+   ÂµÃ·Â¶ÃˆÃ†Ã·Â»Ã¡Â½Â«Ã•Ã¢Â¸Ã¶machineÂºÃÃ„Â³Â¸Ã¶goroutineÂ°Ã³Â¶Â¨(matchmg)
+   mstartÂ»Ã¡Â»Ã˜ÂµÃ·Â¶Ã”Ã“Â¦ÂµÃ„goroutineÂµÃ„Ã‰ÃÃÃ‚ÃÃ„
  */
 M*
 runtime.newm(void)
@@ -830,10 +846,10 @@ runtime.newm(void)
 	M *m;
 
 	m = runtime.malloc(sizeof(M));
-	mcommoninit(m);  //×öÒ»Ğ©³õÊ¼»¯¹¤×÷
+	mcommoninit(m);  //Ã—Ã¶Ã’Â»ÃÂ©Â³ÃµÃŠÂ¼Â»Â¯Â¹Â¤Ã—Ã·
 
-        /* cgoÊÇ²»ÄÜÔÚ·Ö¶ÎÕ»ÔËĞĞ,ÒªÇĞ»»µ½ÏµÍ³Õ»ÖĞ,ËùÒÔ´úÂë´¦ÀíÓĞĞ©²»Í¬
-	   Õâ²¿·ÖÏÈÌø¹ı²»¿´
+        /* cgoÃŠÃ‡Â²Â»Ã„ÃœÃ”ÃšÂ·Ã–Â¶ÃÃ•Â»Ã”Ã‹ÃÃ,Ã’ÂªÃ‡ÃÂ»Â»ÂµÂ½ÃÂµÃÂ³Ã•Â»Ã–Ã,Ã‹Ã¹Ã’Ã”Â´ÃºÃ‚Ã«Â´Â¦Ã€Ã­Ã“ÃÃÂ©Â²Â»ÃÂ¬
+	   Ã•Ã¢Â²Â¿Â·Ã–ÃÃˆÃŒÃ¸Â¹Ã½Â²Â»Â¿Â´
 	 */
 	if(runtime.iscgo) {  
 		CgoThreadStart ts;
@@ -889,7 +905,7 @@ schedule(G *gp)
 			gput(gp);
 			break;
 		case Gmoribund:
-			/* ÉèÖÃgµÄ×´Ì¬ÎªGdead,½«gÓëm·ÖÀë,°Ñg·Å»Øµ½free¶ÓÁĞ */
+			/* Ã‰Ã¨Ã–ÃƒgÂµÃ„Ã—Â´ÃŒÂ¬ÃÂªGdead,Â½Â«gÃ“Ã«mÂ·Ã–Ã€Ã«,Â°Ã‘gÂ·Ã…Â»Ã˜ÂµÂ½freeÂ¶Ã“ÃÃ */
 			gp->status = Gdead;
 			if(gp->lockedm) {
 				gp->lockedm = nil;
@@ -902,8 +918,8 @@ schedule(G *gp)
 				runtime.exit(0);
 			break;
 		}
-		/* exitsyscallÊ±Èç¹ûmcpu´óÓÚÉÏÏŞÁË,Ôòg³öÁËÏµÍ³µ÷ÓÃ²¢²»ÄÜ¼ÌĞøÔËĞĞ,ÒªÍ¨¹ıµ÷ÓÃgosched»á½øÈëµ½schedule
-		   ÕâÖÖÇé¿ögÊÇ±»ÉèÖÃÁËreadyonstopµÄ,½«Ö®·ÅÈë¾ÍĞ÷¶ÓÁĞ
+		/* exitsyscallÃŠÂ±ÃˆÃ§Â¹Ã»mcpuÂ´Ã³Ã“ÃšÃ‰ÃÃÃÃÃ‹,Ã”Ã²gÂ³Ã¶ÃÃ‹ÃÂµÃÂ³ÂµÃ·Ã“ÃƒÂ²Â¢Â²Â»Ã„ÃœÂ¼ÃŒÃÃ¸Ã”Ã‹ÃÃ,Ã’ÂªÃÂ¨Â¹Ã½ÂµÃ·Ã“ÃƒgoschedÂ»Ã¡Â½Ã¸ÃˆÃ«ÂµÂ½schedule
+		   Ã•Ã¢Ã–Ã–Ã‡Ã©Â¿Ã¶gÃŠÃ‡Â±Â»Ã‰Ã¨Ã–ÃƒÃÃ‹readyonstopÂµÃ„,Â½Â«Ã–Â®Â·Ã…ÃˆÃ«Â¾ÃÃÃ·Â¶Ã“ÃÃ
 		 */
 		if(gp->readyonstop){
 			gp->readyonstop = 0;
@@ -925,11 +941,11 @@ schedule(G *gp)
 	}
 
 	// Find (or wait for) g to run.  Unlocks runtime.sched.
-	/* ÏÂÃæÕâ¶Î´úÂë,ÕÒ¸ö´ıÔËĞĞµÄg,½«Ëü°áµ½m->curg,ÉèÖÃÆä×´Ì¬ÎªGrunning
-	   ÕÒ´ıÔËĞĞµÄgÏÈ¿´µ±Ç°µÄm¼Ä´æÆ÷µÄnextg,ºÍlockedgÓò,Èç¹ûÓĞ¾ÍÊÇËüÃÇ
-	   Èç¹ûÃ»ÓĞ,ÔÙÈ¥¾ÍĞ÷g¶ÓÁĞÖĞÕÒ.
+	/* ÃÃ‚ÃƒÃ¦Ã•Ã¢Â¶ÃÂ´ÃºÃ‚Ã«,Ã•Ã’Â¸Ã¶Â´Ã½Ã”Ã‹ÃÃÂµÃ„g,Â½Â«Ã‹Ã¼Â°Ã¡ÂµÂ½m->curg,Ã‰Ã¨Ã–ÃƒÃ†Ã¤Ã—Â´ÃŒÂ¬ÃÂªGrunning
+	   Ã•Ã’Â´Ã½Ã”Ã‹ÃÃÂµÃ„gÃÃˆÂ¿Â´ÂµÂ±Ã‡Â°ÂµÃ„mÂ¼Ã„Â´Ã¦Ã†Ã·ÂµÃ„nextg,ÂºÃlockedgÃ“Ã²,ÃˆÃ§Â¹Ã»Ã“ÃÂ¾ÃÃŠÃ‡Ã‹Ã¼ÃƒÃ‡
+	   ÃˆÃ§Â¹Ã»ÃƒÂ»Ã“Ã,Ã”Ã™ÃˆÂ¥Â¾ÃÃÃ·gÂ¶Ã“ÃÃÃ–ÃÃ•Ã’.
 
-	   Èç¹û´ÓmstartÈë¿Ú½øÈëscheduleµÄ,ÔòÖ±½Ó´ÓÕâÀï¿ªÊ¼¿´´úÂë
+	   ÃˆÃ§Â¹Ã»Â´Ã“mstartÃˆÃ«Â¿ÃšÂ½Ã¸ÃˆÃ«scheduleÂµÃ„,Ã”Ã²Ã–Â±Â½Ã“Â´Ã“Ã•Ã¢Ã€Ã¯Â¿ÂªÃŠÂ¼Â¿Â´Â´ÃºÃ‚Ã«
 	 */
 	gp = nextgandunlock();
 	gp->readyonstop = 0;
@@ -942,9 +958,9 @@ schedule(G *gp)
 	if(m->profilehz != hz)
 		runtime.resetcpuprofiler(hz);
 
-	/* ²é¿´gµÄÉÏÏÂÎÄ»·¾³ÖĞ±£´æµÄpc¼Ä´æÆ÷,Èç¹ûÊÇruntime.goexit,ËµÃ÷Ïß³ÌÖ´ĞĞÍêÁË
-	   Òò´Ëµ÷ÓÃÏàÓ¦µÄÍË³ö´¦Àí.·ñÔò»Ö¸´µ½gµ±Ê±µÄÉÏÏÂÎÄ
-	   runtime.gogo¾ÍÏàµ±ÓÚCÓïÑÔµÄÒ»¸ölongjmp,²»ÊÇº¯Êıµ÷ÓÃĞÎÊ½,¶øÊÇÖ±½ÓÇĞ»»ÉÏÏÂÎÄ
+	/* Â²Ã©Â¿Â´gÂµÃ„Ã‰ÃÃÃ‚ÃÃ„Â»Â·Â¾Â³Ã–ÃÂ±Â£Â´Ã¦ÂµÃ„pcÂ¼Ã„Â´Ã¦Ã†Ã·,ÃˆÃ§Â¹Ã»ÃŠÃ‡runtime.goexit,Ã‹ÂµÃƒÃ·ÃÃŸÂ³ÃŒÃ–Â´ÃÃÃÃªÃÃ‹
+	   Ã’Ã²Â´Ã‹ÂµÃ·Ã“ÃƒÃÃ Ã“Â¦ÂµÃ„ÃÃ‹Â³Ã¶Â´Â¦Ã€Ã­.Â·Ã±Ã”Ã²Â»Ã–Â¸Â´ÂµÂ½gÂµÂ±ÃŠÂ±ÂµÃ„Ã‰ÃÃÃ‚ÃÃ„
+	   runtime.gogoÂ¾ÃÃÃ ÂµÂ±Ã“ÃšCÃ“Ã¯Ã‘Ã”ÂµÃ„Ã’Â»Â¸Ã¶longjmp,Â²Â»ÃŠÃ‡ÂºÂ¯ÃŠÃ½ÂµÃ·Ã“ÃƒÃÃÃŠÂ½,Â¶Ã¸ÃŠÃ‡Ã–Â±Â½Ã“Ã‡ÃÂ»Â»Ã‰ÃÃÃ‚ÃÃ„
 	 */
 	if(gp->sched.pc == (byte*)runtime.goexit) {	// kickoff
 		runtime.gogocall(&gp->sched, (void(*)(void))gp->entry);
@@ -981,10 +997,10 @@ runtime.gosched(void)
 // decrementing mcpu, because we haven't released the
 // sched lock yet, so the garbage collector cannot be running.
 
-/* µ±goroutine½øÈëµ½syscallÖ®ºómcpuÊıÁ¿»á¼õ.ÕâÑùÔÚmatchmgÖĞ,¾Í¿ÉÒÔĞÂ·ÖÅämÀ´ÔËĞĞ¾ÍĞ÷µÄg.
-   µ«ÊÇÎÒÓĞ¸öÒÉÎÊ:g½øÈësyscallºó²¢Ã»ÓĞÓëm°şÀë,Èç¹ûmatchmgÖĞnewmÁË,ÄÇÃ´Æñ²»ÊÇ»áÒıÈë¸ü¶àµÄosÏß³ÌÁË??
-   ËäÈ»¿ÉÒÔ½¨ºÜ¶àgoroutineÎŞËùÎ½(Ã¿¸öÖ»ÊÇ4kµÄÕ»,²¢ÇÒÓëÏµÍ³Ïß³ÌÎŞ¹Ø),µ«ÊÇÈç¹û½¨³öÀ´µÄgoroutine²»Í£µØentersyscall,
-   ×îÖÕ»¹ÊÇ»á²»Í£µØÉú³ÉºÜ¶àosÏß³Ì°¡??
+/* ÂµÂ±goroutineÂ½Ã¸ÃˆÃ«ÂµÂ½syscallÃ–Â®ÂºÃ³mcpuÃŠÃ½ÃÂ¿Â»Ã¡Â¼Ãµ.Ã•Ã¢Ã‘Ã¹Ã”ÃšmatchmgÃ–Ã,Â¾ÃÂ¿Ã‰Ã’Ã”ÃÃ‚Â·Ã–Ã…Ã¤mÃ€Â´Ã”Ã‹ÃÃÂ¾ÃÃÃ·ÂµÃ„g.
+   ÂµÂ«ÃŠÃ‡ÃÃ’Ã“ÃÂ¸Ã¶Ã’Ã‰ÃÃŠ:gÂ½Ã¸ÃˆÃ«syscallÂºÃ³Â²Â¢ÃƒÂ»Ã“ÃÃ“Ã«mÂ°Ã¾Ã€Ã«,ÃˆÃ§Â¹Ã»matchmgÃ–ÃnewmÃÃ‹,Ã„Ã‡ÃƒÂ´Ã†Ã±Â²Â»ÃŠÃ‡Â»Ã¡Ã’Ã½ÃˆÃ«Â¸Ã¼Â¶Ã ÂµÃ„osÃÃŸÂ³ÃŒÃÃ‹??
+   Ã‹Ã¤ÃˆÂ»Â¿Ã‰Ã’Ã”Â½Â¨ÂºÃœÂ¶Ã goroutineÃÃÃ‹Ã¹ÃÂ½(ÃƒÂ¿Â¸Ã¶Ã–Â»ÃŠÃ‡4kÂµÃ„Ã•Â»,Â²Â¢Ã‡Ã’Ã“Ã«ÃÂµÃÂ³ÃÃŸÂ³ÃŒÃÃÂ¹Ã˜),ÂµÂ«ÃŠÃ‡ÃˆÃ§Â¹Ã»Â½Â¨Â³Ã¶Ã€Â´ÂµÃ„goroutineÂ²Â»ÃÂ£ÂµÃ˜entersyscall,
+   Ã—Ã®Ã–Ã•Â»Â¹ÃŠÃ‡Â»Ã¡Â²Â»ÃÂ£ÂµÃ˜Ã‰ÃºÂ³Ã‰ÂºÃœÂ¶Ã osÃÃŸÂ³ÃŒÂ°Â¡??
  */
 #pragma textflag 7
 void
@@ -995,8 +1011,8 @@ runtime.entersyscall(void)
 	if(m->profilehz > 0)
 		runtime.setprof(false);
 
-	/* entersyscall×öµÄÊÂÇé´óÖÂÊÇÉèÖÃgµÄ×´Ì¬ÎªGsyscall,¼õÉÙmcpu
-	   Èç¹ûmcpu¼õÉÙÖ®ºóĞ¡ÓÚmcpumaxÁË²¢ÇÒÓĞ´¦ÓÚ¾ÍĞ÷Ì¬µÄg,Ôòmatchmg
+	/* entersyscallÃ—Ã¶ÂµÃ„ÃŠÃ‚Ã‡Ã©Â´Ã³Ã–Ã‚ÃŠÃ‡Ã‰Ã¨Ã–ÃƒgÂµÃ„Ã—Â´ÃŒÂ¬ÃÂªGsyscall,Â¼ÃµÃ‰Ã™mcpu
+	   ÃˆÃ§Â¹Ã»mcpuÂ¼ÃµÃ‰Ã™Ã–Â®ÂºÃ³ÃÂ¡Ã“ÃšmcpumaxÃÃ‹Â²Â¢Ã‡Ã’Ã“ÃÂ´Â¦Ã“ÃšÂ¾ÃÃÃ·ÃŒÂ¬ÂµÃ„g,Ã”Ã²matchmg
 	 */
 	// Leave SP around for gc and traceback.
 	runtime.gosave(&g->sched);
@@ -1023,7 +1039,7 @@ runtime.entersyscall(void)
 		return;
 
 	schedlock();
-	/* ½øĞĞµ½ÕâÀïËµÃ÷mcpu--ÁËÖ®ºóÊÇĞ¡ÓÚmcpumaxµÄ,Òò´ËÈç¹ûÓĞ¾ÍĞ÷µÄg,Ôòmatchmg¸øÓèÔËĞĞ»ú»á
+	/* Â½Ã¸ÃÃÂµÂ½Ã•Ã¢Ã€Ã¯Ã‹ÂµÃƒÃ·mcpu--ÃÃ‹Ã–Â®ÂºÃ³ÃŠÃ‡ÃÂ¡Ã“ÃšmcpumaxÂµÃ„,Ã’Ã²Â´Ã‹ÃˆÃ§Â¹Ã»Ã“ÃÂ¾ÃÃÃ·ÂµÃ„g,Ã”Ã²matchmgÂ¸Ã¸Ã“Ã¨Ã”Ã‹ÃÃÂ»ÃºÂ»Ã¡
 	 */
 	v = runtime.atomicload(&runtime.sched.atomic);
 	if(atomic_gwaiting(v)) {
@@ -1039,15 +1055,15 @@ runtime.entersyscall(void)
 	// (notewakeup, matchmg) triggered something using it.
 	runtime.gosave(&g->sched);
 
-	schedunlock(); /* unlockÖ®ºóÔËĞĞµÄ¾Í²»ÔÙÊÇÕâ¸ömÁË */
+	schedunlock(); /* unlockÃ–Â®ÂºÃ³Ã”Ã‹ÃÃÂµÃ„Â¾ÃÂ²Â»Ã”Ã™ÃŠÃ‡Ã•Ã¢Â¸Ã¶mÃÃ‹ */
 }
 
 // The goroutine g exited its system call.
 // Arrange for it to run on a cpu again.
 // This is called only from the go syscall library, not
 // from the low-level system calls used by the runtime.
-/* Èç¹ûmcpuĞ¡ÓÚmcpumaxµÄÇé¿ö,Ö±½ÓreturnÁË,²¢ÇÒgµÄ×´Ì¬ÊÇrunning.±íÊ¾ÈÃËü¼ÌĞøÔËĞĞ
-   Èç¹ûmcpuÉÏÏŞÁË,ÔòÉèÖÃreadyonstop,ÏÂÒ»´ÎscheduleÖĞ½«Ëü¸Ä³ÉGreadyÁË·Åµ½¾ÍĞ÷¶ÓÁĞÖĞ
+/* ÃˆÃ§Â¹Ã»mcpuÃÂ¡Ã“ÃšmcpumaxÂµÃ„Ã‡Ã©Â¿Ã¶,Ã–Â±Â½Ã“returnÃÃ‹,Â²Â¢Ã‡Ã’gÂµÃ„Ã—Â´ÃŒÂ¬ÃŠÃ‡running.Â±Ã­ÃŠÂ¾ÃˆÃƒÃ‹Ã¼Â¼ÃŒÃÃ¸Ã”Ã‹ÃÃ
+   ÃˆÃ§Â¹Ã»mcpuÃ‰ÃÃÃÃÃ‹,Ã”Ã²Ã‰Ã¨Ã–Ãƒreadyonstop,ÃÃ‚Ã’Â»Â´ÃscheduleÃ–ÃÂ½Â«Ã‹Ã¼Â¸Ã„Â³Ã‰GreadyÃÃ‹Â·Ã…ÂµÂ½Â¾ÃÃÃ·Â¶Ã“ÃÃÃ–Ã
  */
 void
 runtime.exitsyscall(void)
@@ -1250,14 +1266,14 @@ runtime.malg(int32 stacksize)
 
 	newg = runtime.malloc(sizeof(G));
 	if(stacksize >= 0) {
-		/* m->g0ÊÇµ÷¶ÈÆ÷ËùÔÚµÄÕ»µÄgoroutine,m->curgÊÇmÖĞµ±Ç°ÔËĞĞ×ÅµÄg
-		   gÊÇÒ»¸ö¼Ä´æÆ÷,ÊÇµ±Ç°ÔËĞĞµÄgoroutineµÄ¼Ä´æÆ÷
-		   ·ÖÅäÒ»¸öĞÂÕ»¿Õ¼äµÄ´úÂëÒªÇĞ»»µ½µ÷¶ÈÆ÷Õ»È¥ÔËĞĞ
+		/* m->g0ÃŠÃ‡ÂµÃ·Â¶ÃˆÃ†Ã·Ã‹Ã¹Ã”ÃšÂµÃ„Ã•Â»ÂµÃ„goroutine,m->curgÃŠÃ‡mÃ–ÃÂµÂ±Ã‡Â°Ã”Ã‹ÃÃÃ—Ã…ÂµÃ„g
+		   gÃŠÃ‡Ã’Â»Â¸Ã¶Â¼Ã„Â´Ã¦Ã†Ã·,ÃŠÃ‡ÂµÂ±Ã‡Â°Ã”Ã‹ÃÃÂµÃ„goroutineÂµÃ„Â¼Ã„Â´Ã¦Ã†Ã·
+		   Â·Ã–Ã…Ã¤Ã’Â»Â¸Ã¶ÃÃ‚Ã•Â»Â¿Ã•Â¼Ã¤ÂµÃ„Â´ÃºÃ‚Ã«Ã’ÂªÃ‡ÃÂ»Â»ÂµÂ½ÂµÃ·Â¶ÃˆÃ†Ã·Ã•Â»ÃˆÂ¥Ã”Ã‹ÃÃ
 		 */
 		if(g == m->g0) {
 			// running on scheduler stack already.
-			/* stackallocÔÚÎÄ¼şmalloc.gocÖĞ,ÉÏÃæÓĞ×¢ÊÍËµËü±ØĞëÔÚµ÷¶ÈÆ÷Õ»ÉÏ±»µ÷ÓÃ,
-			   ÕâÑù¾Í²»±ØÔÚstackallocËùÔËĞĞµÄÕ»ÉÏÔö³¤Õ»
+			/* stackallocÃ”ÃšÃÃ„Â¼Ã¾malloc.gocÃ–Ã,Ã‰ÃÃƒÃ¦Ã“ÃÃ—Â¢ÃŠÃÃ‹ÂµÃ‹Ã¼Â±Ã˜ÃÃ«Ã”ÃšÂµÃ·Â¶ÃˆÃ†Ã·Ã•Â»Ã‰ÃÂ±Â»ÂµÃ·Ã“Ãƒ,
+			   Ã•Ã¢Ã‘Ã¹Â¾ÃÂ²Â»Â±Ã˜Ã”ÃšstackallocÃ‹Ã¹Ã”Ã‹ÃÃÂµÃ„Ã•Â»Ã‰ÃÃ”Ã¶Â³Â¤Ã•Â»
 			 */
 			stk = runtime.stackalloc(StackSystem + stacksize);
 		} else {
@@ -1282,13 +1298,13 @@ runtime.malg(int32 stacksize)
 // are available sequentially after &fn; they would not be
 // copied if a stack split occurred.  It's OK for this to call
 // functions that split the stack.
-/* º¯Êı¹¦ÄÜ:´´½¨Ò»¸öĞÂµÄg
-   Õâ¸öº¯Êı²»ÄÜÓÃ·Ö¶ÎÕ»,ÕæÕıµÄ¹¤×÷ÊÇµ÷ÓÃnewproc1Íê³ÉµÄ
-   newproc1µÄ¶¯×÷°üÀ¨
-   ·ÖÅäÒ»¸ögµÄ½á¹¹Ìå
-   ³õÊ¼»¯Õâ¸ö½á¹¹ÌåµÄÒ»Ğ©Óò
-   ½«Ëü¹ÒÔÚ¾ÍĞ÷¶ÓÁĞ
-   Òı·¢Ò»´Îµ÷¶Èmatchmg
+/* ÂºÂ¯ÃŠÃ½Â¹Â¦Ã„Ãœ:Â´Â´Â½Â¨Ã’Â»Â¸Ã¶ÃÃ‚ÂµÃ„g
+   Ã•Ã¢Â¸Ã¶ÂºÂ¯ÃŠÃ½Â²Â»Ã„ÃœÃ“ÃƒÂ·Ã–Â¶ÃÃ•Â»,Ã•Ã¦Ã•Ã½ÂµÃ„Â¹Â¤Ã—Ã·ÃŠÃ‡ÂµÃ·Ã“Ãƒnewproc1ÃÃªÂ³Ã‰ÂµÃ„
+   newproc1ÂµÃ„Â¶Â¯Ã—Ã·Â°Ã¼Ã€Â¨
+   Â·Ã–Ã…Ã¤Ã’Â»Â¸Ã¶gÂµÃ„Â½Ã¡Â¹Â¹ÃŒÃ¥
+   Â³ÃµÃŠÂ¼Â»Â¯Ã•Ã¢Â¸Ã¶Â½Ã¡Â¹Â¹ÃŒÃ¥ÂµÃ„Ã’Â»ÃÂ©Ã“Ã²
+   Â½Â«Ã‹Ã¼Â¹Ã’Ã”ÃšÂ¾ÃÃÃ·Â¶Ã“ÃÃ
+   Ã’Ã½Â·Â¢Ã’Â»Â´ÃÂµÃ·Â¶Ãˆmatchmg
  */
 #pragma textflag 7
 void
@@ -1316,21 +1332,21 @@ runtime.newproc1(byte *fn, byte *argp, int32 narg, int32 nret, void *callerpc)
 
 //printf("newproc1 %p %p narg=%d nret=%d\n", fn, argp, narg, nret);
 	siz = narg + nret;
-	siz = (siz+7) & ~7; //8×Ö½Ú¶ÔÆë
+	siz = (siz+7) & ~7; //8Ã—Ã–Â½ÃšÂ¶Ã”Ã†Ã«
 
 	// We could instead create a secondary stack frame
 	// and make it look like goexit was on the original but
 	// the call to the actual goroutine function was split.
 	// Not worth it: this is almost always an error.
-	if(siz > StackMin - 1024)//Ìø¹ı²»¿´
+	if(siz > StackMin - 1024)//ÃŒÃ¸Â¹Ã½Â²Â»Â¿Â´
 		runtime.throw("runtime.newproc: function arguments too large for new goroutine");
 
 	schedlock();
 
-	/* ÏÂÃæÕâÒ»¶Î×öµÄÊÂÇéÊÇ·ÖÅäÒ»¸ögµÄ¿Õ¼ä
-	   Èç¹ûgfree¶ÓÁĞÖĞÓĞ¾ÍÖ±½ÓÈ¡,Ã»ÓĞ
-	   ¾ÍÔÙµ÷ÓÃmalgº¯Êı·ÖÅäÒ»¸öĞÂµÄg,²¢¹ÒÔÚallg¶ÓÁĞÎ²
-	   È»ºóÉèÖÃgµÄ×´Ì¬ÎªGwaiting
+	/* ÃÃ‚ÃƒÃ¦Ã•Ã¢Ã’Â»Â¶ÃÃ—Ã¶ÂµÃ„ÃŠÃ‚Ã‡Ã©ÃŠÃ‡Â·Ã–Ã…Ã¤Ã’Â»Â¸Ã¶gÂµÃ„Â¿Ã•Â¼Ã¤
+	   ÃˆÃ§Â¹Ã»gfreeÂ¶Ã“ÃÃÃ–ÃÃ“ÃÂ¾ÃÃ–Â±Â½Ã“ÃˆÂ¡,ÃƒÂ»Ã“Ã
+	   Â¾ÃÃ”Ã™ÂµÃ·Ã“ÃƒmalgÂºÂ¯ÃŠÃ½Â·Ã–Ã…Ã¤Ã’Â»Â¸Ã¶ÃÃ‚ÂµÃ„g,Â²Â¢Â¹Ã’Ã”ÃšallgÂ¶Ã“ÃÃÃÂ²
+	   ÃˆÂ»ÂºÃ³Ã‰Ã¨Ã–ÃƒgÂµÃ„Ã—Â´ÃŒÂ¬ÃÂªGwaiting
 	 */
 	if((newg = gfget()) != nil){
 		if(newg->stackguard - StackGuard != newg->stack0)
@@ -1346,10 +1362,10 @@ runtime.newproc1(byte *fn, byte *argp, int32 narg, int32 nret, void *callerpc)
 	newg->status = Gwaiting;
 	newg->waitreason = "new goroutine";
 
-	/* ÏÂÃæÕâÒ»¶Î×öµÄÊÂÇéÊÇ×öÒ»Ğ©³õÊ¼»¯gµÄ¹¤×÷
-	   °üÀ¨°Ñµ÷ÓÃ²ÎÊıÒÆµ½gµÄÕ»ÖĞ
-	   °ÑgµÄsp,pcµÈ½ø³ÌÉÏÏÂÎÄ±£´æÔÚgµÄschedÖĞ
-	   ÉèÖÃgµÄgidÓò,Ôö¼Óg¸öÊıµÄµÄÈ«¾Ö¼ÆÊı
+	/* ÃÃ‚ÃƒÃ¦Ã•Ã¢Ã’Â»Â¶ÃÃ—Ã¶ÂµÃ„ÃŠÃ‚Ã‡Ã©ÃŠÃ‡Ã—Ã¶Ã’Â»ÃÂ©Â³ÃµÃŠÂ¼Â»Â¯gÂµÃ„Â¹Â¤Ã—Ã·
+	   Â°Ã¼Ã€Â¨Â°Ã‘ÂµÃ·Ã“ÃƒÂ²ÃÃŠÃ½Ã’Ã†ÂµÂ½gÂµÃ„Ã•Â»Ã–Ã
+	   Â°Ã‘gÂµÃ„sp,pcÂµÃˆÂ½Ã¸Â³ÃŒÃ‰ÃÃÃ‚ÃÃ„Â±Â£Â´Ã¦Ã”ÃšgÂµÃ„schedÃ–Ã
+	   Ã‰Ã¨Ã–ÃƒgÂµÃ„gidÃ“Ã²,Ã”Ã¶Â¼Ã“gÂ¸Ã¶ÃŠÃ½ÂµÃ„ÂµÃ„ÃˆÂ«Â¾Ã–Â¼Ã†ÃŠÃ½
 	 */
 	sp = newg->stackbase;
 	sp -= siz;
@@ -1361,8 +1377,8 @@ runtime.newproc1(byte *fn, byte *argp, int32 narg, int32 nret, void *callerpc)
 	}
 
 	newg->sched.sp = sp;
-        /* ×¢Òâµ½ÕâÀïµÄ·µ»ØµØÖ·ÊÇgoexit,ÔÚscheduleÖĞ»Ö¸´goroutineÉÏÏÂÎÄ»·¾³Ê±,
-	   Èç¹û¼ì²âµ½Òª·µ»Øµ½µÄpcÊÇgoexit,Ôò×öÏàÓ¦´¦Àí,½áÊøÕâ¸ögoroutine
+        /* Ã—Â¢Ã’Ã¢ÂµÂ½Ã•Ã¢Ã€Ã¯ÂµÃ„Â·ÂµÂ»Ã˜ÂµÃ˜Ã–Â·ÃŠÃ‡goexit,Ã”ÃšscheduleÃ–ÃÂ»Ã–Â¸Â´goroutineÃ‰ÃÃÃ‚ÃÃ„Â»Â·Â¾Â³ÃŠÂ±,
+	   ÃˆÃ§Â¹Ã»Â¼Ã¬Â²Ã¢ÂµÂ½Ã’ÂªÂ·ÂµÂ»Ã˜ÂµÂ½ÂµÃ„pcÃŠÃ‡goexit,Ã”Ã²Ã—Ã¶ÃÃ Ã“Â¦Â´Â¦Ã€Ã­,Â½Ã¡ÃŠÃ¸Ã•Ã¢Â¸Ã¶goroutine
 	 */
 	newg->sched.pc = (byte*)runtime.goexit; 
 	newg->sched.g = newg;
@@ -1373,7 +1389,7 @@ runtime.newproc1(byte *fn, byte *argp, int32 narg, int32 nret, void *callerpc)
 	runtime.sched.goidgen++;
 	newg->goid = runtime.sched.goidgen;
 
-	/* Õâ¸öº¯Êı½«°Ñnewg×´Ì¬ÉèÖÃ³ÉGrunnable,²¢ÒıÆğÒ»½«µ÷¶Èmatchmg */
+	/* Ã•Ã¢Â¸Ã¶ÂºÂ¯ÃŠÃ½Â½Â«Â°Ã‘newgÃ—Â´ÃŒÂ¬Ã‰Ã¨Ã–ÃƒÂ³Ã‰Grunnable,Â²Â¢Ã’Ã½Ã†Ã°Ã’Â»Â½Â«ÂµÃ·Â¶Ãˆmatchmg */
 	newprocreadylocked(newg);
 	schedunlock();
 

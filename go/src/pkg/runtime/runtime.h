@@ -100,6 +100,13 @@ typedef	struct	PollDesc	PollDesc;
  * Every C file linked into a Go program must include runtime.h so that the
  * C compiler (6c, 8c, etc.) knows to avoid other uses of these dedicated
  * registers. The Go compiler (6g, 8g, etc.) knows to avoid them.
+*
+
+ "extern register"是由6c,8c等实现的一个特殊的存储。
+在ARM上，它是实际的寄存器；其实平台它是由段寄存器进行索引的线程本地存储的一个槽位。
+在linux系统中，对g和m使用的分别是0(GS)和4(GS)
+需要注意的是，链接器还会根据特定操作系统改变编译器的输出，例如，6l/linux下会将0(GS)重写为-16(FS)
+每个链接到Go程序的C文件都必须包含runtime.h头文件，这样C编译器知道避免使用专用的寄存器。
  */
 extern	register	G*	g;
 extern	register	M*	m;
@@ -399,7 +406,7 @@ enum
 };
 
 // NOTE(rsc): keep in sync with extern.go:/type.Func.
-// Eventually, the loaded symbol table should be closer to this form.
+//和extern.go中的Func类型同步。最后，加载的符号表应该是接近这种形式
 struct	Func
 {
 	String	name;
@@ -573,7 +580,7 @@ struct	Alg
 
 extern	Alg	runtime·algarray[Amax];
 
-byte*	runtime·startup_random_data;
+byte*	runtime·startup_random_data;	//在系统初始化是读取/dev/random获得
 uint32	runtime·startup_random_data_len;
 void	runtime·get_random_data(byte**, int32*);
 
@@ -683,7 +690,7 @@ int32	runtime·runetochar(byte*, int32);
 int32	runtime·charntorune(int32*, uint8*, int32);
 
 /*
- * very low level c-called
+ * very low level c-called 下面差不多都是用汇编实现的
  */
 // USED定义是plan 9 C编译器提供的primitive，其作用是抑制编译器优化掉对*x的赋值
 #define FLUSH(x)	USED(x)
@@ -833,6 +840,7 @@ extern uint32 runtime·worldsema;
 /*
  * mutual exclusion locks.  in the uncontended case,
  * as fast as spin locks (just a few user-level instructions),
+ 和自旋锁一样快，只需要几条user-level的指令
  * but on the contention path they sleep in the kernel.
  * a zeroed Lock is unlocked (no need to initialize each lock).
  */
