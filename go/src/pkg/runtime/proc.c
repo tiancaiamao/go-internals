@@ -9,13 +9,14 @@
 #include "race.h"
 #include "type.h"
 
-// Goroutine scheduler
-// The scheduler's job is to distribute ready-to-run goroutines over worker threads.
+// Goroutine调度器
+// 调度器的任务是将ready-to-run的goroutine分配到工作线程中
 //
-// The main concepts are:
+// 主要的概念有：
 // G - goroutine.
-// M - worker thread, or machine.
-// P - processor, a resource that is required to execute Go code.
+// M - 工作线程, 或者machine.
+// P - processor, 执行Go代码需要的一个资源
+// M必须关联了P才能执行Go代码，但是它可以是阻塞或者处于系统调用中时不需要关联P
 //     M must have an associated P to execute Go code, however it can be
 //     blocked or in a syscall w/o an associated P.
 //
@@ -33,7 +34,7 @@ struct Sched {
 	int32	mcount;	 // number of m's that have been created
 
 	P*	pidle;  // idle P's
-	uint32	npidle;
+	uint32	npidle;  //idle P的数量
 	uint32	nmspinning;
 
 	// Global runnable queue.
@@ -128,7 +129,7 @@ runtime·schedinit(void)
 	runtime·mallocinit();
 	mcommoninit(m);
 
-        //在asm_amd64.s中将argc,argv保存到了static全局变量的，这里分配os.Args的空间，将它们复制过去。
+    //在asm_amd64.s中将argc,argv保存到了static全局变量的，这里分配os.Args的空间，将它们复制过去。
 	runtime·goargs(); 
 	runtime·goenvs();
 
@@ -143,9 +144,12 @@ runtime·schedinit(void)
 	p = runtime·getenv("GOMAXPROCS");
 	if(p != nil && (n = runtime·atoi(p)) > 0) {
 		if(n > MaxGomaxprocs)
-			n = MaxGomaxprocs;
+			n = MaxGomaxprocs;  //实际上MaxGomaxprocs是一个很大的枚举常量，是1<<8，256个
 		procs = n;
 	}
+	// 这里malloc的是MaxGomaxprocs+1，这个+1好像是0号位置使用的场景有些不同
+	// 这里分配的只是P的指针的存储空间，并没有为P的内容分配空间，在下面procresize函数中会为P的内容分配空间并做初始化
+	// 注意的是，并不是MaxGomaxprocs全都是有内容的，只有其中的procs个是分配了，其它相当于是空的P指针。
 	runtime·allp = runtime·malloc((MaxGomaxprocs+1)*sizeof(runtime·allp[0]));
 	procresize(procs); //设置procs
 
@@ -173,9 +177,15 @@ runtime·main(void)
 	// Those can arrange for main.main to run in the main thread
 	// by calling runtime.LockOSThread during initialization
 	// to preserve the lock.
+	// 在初始化时，将main goroutine锁定到main系统线程
+	// 大部分的程序都不在乎，但是有一些是需要在main线程中调用的。
+	// 它们可以通过在初始化时调用runtime.LockOSThread安排main.main运行在main线程中
 	runtime·lockOSThread();
 	if(m != &runtime·m0)
 		runtime·throw("runtime·main not on m0");
+
+	//程序初始化过程中，将runtime.main作为一个goroutine放入队列，schedule后它将作为最早的入口
+	//接着它会新开一个goroutine执行垃圾回收的程序。自身会去执行main.main
 	runtime·newproc1(&scavenger, nil, 0, 0, runtime·main);
 	main·init();
 	runtime·unlockOSThread();
@@ -250,9 +260,11 @@ mcommoninit(M *mp)
 {
 	// If there is no mcache runtime·callers() will crash,
 	// and we are most likely in sysmon thread so the stack is senseless anyway.
+	// 如果没有mcache，runtime.callers()会崩溃，
+	// 并且我们最可能是在系统线程中，因此栈是无意义的。
 	if(m->mcache)
 		runtime·callers(1, mp->createstack, nelem(mp->createstack));
-
+	// 快速随机数种子
 	mp->fastrand = 0x49f6428aUL + mp->id + runtime·cputicks();
 
 	runtime·lock(&runtime·sched);
@@ -269,7 +281,7 @@ mcommoninit(M *mp)
 	runtime·unlock(&runtime·sched);
 }
 
-// Mark gp ready to run.
+// 将gp标记为就绪
 void
 runtime·ready(G *gp)
 {
@@ -279,9 +291,9 @@ runtime·ready(G *gp)
 		runtime·throw("bad g->status in ready");
 	}
 	gp->status = Grunnable;
-	runqput(m->p, gp);
+	runqput(m->p, gp); //放到就绪队列
 	if(runtime·atomicload(&runtime·sched.npidle) != 0 && runtime·atomicload(&runtime·sched.nmspinning) == 0)  // TODO: fast atomic
-		wakep();
+		wakep();	//如果有idle的P并且自旋锁中的m，立即唤醒P
 }
 
 int32
@@ -289,16 +301,16 @@ runtime·gcprocs(void)
 {
 	int32 n;
 
-	// Figure out how many CPUs to use during GC.
+	// GC过程中最多使用几个CPU
 	// Limited by gomaxprocs, number of actual CPUs, and MaxGcproc.
 	runtime·lock(&runtime·sched);
-	n = runtime·gomaxprocs;
-	if(n > runtime·ncpu)
+	n = runtime·gomaxprocs; //先设置为GOMAXPROCS
+	if(n > runtime·ncpu)	//不会超过物理cpu数目
 		n = runtime·ncpu;
-	if(n > MaxGcproc)
+	if(n > MaxGcproc)		//不会超过MaxGcporc
 		n = MaxGcproc;
 	if(n > runtime·sched.nmidle+1) // one M is currently running
-		n = runtime·sched.nmidle+1;
+		n = runtime·sched.nmidle+1; //不会超过idle m的数量加1
 	runtime·unlock(&runtime·sched);
 	return n;
 }
@@ -328,9 +340,9 @@ runtime·helpgc(int32 nproc)
 	runtime·lock(&runtime·sched);
 	pos = 0;
 	for(n = 1; n < nproc; n++) {  // one M is currently running
-		if(runtime·allp[pos]->mcache == m->mcache)
+		if(runtime·allp[pos]->mcache == m->mcache)	//跳过使用当前mcache的p
 			pos++;
-		mp = mget();
+		mp = mget();	//取一个m
 		if(mp == nil)
 			runtime·throw("runtime·gcprocs inconsistency");
 		mp->helpgc = n;
@@ -341,6 +353,8 @@ runtime·helpgc(int32 nproc)
 	runtime·unlock(&runtime·sched);
 }
 
+// 把所有的P都停下来。包括把当前P停止，把处理Syscall的P停止，把所有idle的P都停止...
+// 然后等待还不停止的P停下来
 void
 runtime·stoptheworld(void)
 {
@@ -352,25 +366,26 @@ runtime·stoptheworld(void)
 	runtime·lock(&runtime·sched);
 	runtime·sched.stopwait = runtime·gomaxprocs;
 	runtime·atomicstore((uint32*)&runtime·gcwaiting, 1);
-	// stop current P
+	// 停止当前的P
 	m->p->status = Pgcstop;
 	runtime·sched.stopwait--;
-	// try to retake all P's in Psyscall status
+	
+	// 尝试将所有Psyscall状态的P都拿过来(设置为Pgcstop)
 	for(i = 0; i < runtime·gomaxprocs; i++) {
 		p = runtime·allp[i];
 		s = p->status;
 		if(s == Psyscall && runtime·cas(&p->status, s, Pgcstop))
 			runtime·sched.stopwait--;
 	}
-	// stop idle P's
+	// 将所有idle状态的P都停下来
 	while(p = pidleget()) {
 		p->status = Pgcstop;
 		runtime·sched.stopwait--;
 	}
-	wait = runtime·sched.stopwait > 0;
+	wait = runtime·sched.stopwait > 0; //还有仍然没停下来的则等待
 	runtime·unlock(&runtime·sched);
 
-	// wait for remaining P's to stop voluntary
+	// 等待剩下的P也志愿停下来
 	if(wait) {
 		runtime·notesleep(&runtime·sched.stopnote);
 		runtime·noteclear(&runtime·sched.stopnote);
@@ -1845,7 +1860,7 @@ procresize(int32 new)
 		if(p == nil) {
 			p = (P*)runtime·mallocgc(sizeof(*p), 0, 0, 1);
 			p->status = Pgcstop;
-			runtime·atomicstorep(&runtime·allp[i], p);
+			runtime·atomicstorep(&runtime·allp[i], p); //不明白为什么这个还需要是原子操作？
 		}
 		if(p->mcache == nil) {
 			if(old==0 && i==0)
@@ -1853,7 +1868,7 @@ procresize(int32 new)
 			else
 				p->mcache = runtime·allocmcache();
 		}
-		if(p->runq == nil) {
+		if(p->runq == nil) {  //每个p上面挂的可运行队列为128个，分配这么多G的指针的空间
 			p->runqsize = 128;
 			p->runq = (G**)runtime·mallocgc(p->runqsize*sizeof(G*), 0, 0, 1);
 		}

@@ -297,7 +297,7 @@ struct	M
 	int32	nomemprof;
 	int32	dying;
 	int32	profilehz;
-	int32	helpgc;
+	int32	helpgc;		//不为0表示此m在做帮忙gc。helpgc等于n只是一个编号
 	bool	blockingsyscall;
 	bool	spinning;
 	uint32	fastrand;
