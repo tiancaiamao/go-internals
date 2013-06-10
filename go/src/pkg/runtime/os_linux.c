@@ -202,6 +202,8 @@ runtime·mpreinit(M *mp)
 
 // Called to initialize a new m (including the bootstrap m).
 // Called on the new thread, can not allocate memory.
+// 被调用来初始化一个新的m(包括bootstrap的m)
+// 在新的线程中被调用，不能分配内存
 void
 runtime·minit(void)
 {

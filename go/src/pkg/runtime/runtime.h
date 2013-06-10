@@ -245,7 +245,7 @@ struct	G
 	uintptr	stack0;
 	FuncVal*	fnstart;		// initial function
 	G*	alllink;	// on allg
-	void*	param;		// passed parameter on wakeup
+	void*	param;		// passed parameter on wakeup 用于传递参数
 	int16	status;
 	int64	goid;
 	uint32	selgen;		// valid sudog pointer
@@ -351,11 +351,11 @@ struct P
 
 	uint32	status;  // one of Pidle/Prunning/...
 	P*	link;
-	uint32	tick;   // incremented on every scheduler or system call
-	M*	m;	// back-link to associated M (nil if idle)
+	uint32	tick;   // 每次调度或者系统调用时将它加一
+	M*	m;	// 链接到它关联的M (nil if idle)  m->p->m
 	MCache*	mcache;
 
-	// Queue of runnable goroutines.
+	// runnable的goroutine队列
 	G**	runq;
 	int32	runqhead;
 	int32	runqtail;

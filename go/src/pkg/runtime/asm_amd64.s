@@ -732,6 +732,7 @@ TEXT runtime·setcallerpc(SB),7,$0
 	MOVQ	BX, -8(AX)		// set calling pc
 	RET
 
+// 利用父函数传入的参数确定父函数的栈
 TEXT runtime·getcallersp(SB),7,$0
 	MOVQ	sp+0(FP), AX
 	RET
