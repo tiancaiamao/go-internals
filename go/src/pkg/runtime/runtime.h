@@ -237,17 +237,17 @@ struct	G
 	uintptr	stackbase;	// cannot move - also known to libmach, runtime/cgo
 	Defer*	defer;
 	Panic*	panic;
-	Gobuf	sched;
+	Gobuf	sched;		//进程切换时，利用sched域来保存上下文
 	uintptr	gcstack;		// if status==Gsyscall, gcstack = stackbase to use during gc
 	uintptr	gcsp;		// if status==Gsyscall, gcsp = sched.sp to use during gc
 	byte*	gcpc;		// if status==Gsyscall, gcpc = sched.pc to use during gc
 	uintptr	gcguard;		// if status==Gsyscall, gcguard = stackguard to use during gc
 	uintptr	stack0;
-	FuncVal*	fnstart;		// initial function
-	G*	alllink;	// on allg
-	void*	param;		// passed parameter on wakeup 用于传递参数
-	int16	status;
-	int64	goid;
+	FuncVal*	fnstart;		// goroutine运行的函数
+	G*	alllink;	// 用这个域将所有的goroutine挂在allg链表上
+	void*	param;		// 用于传递参数，睡眠时其它goroutine设置param，唤醒时此goroutine可以获取
+	int16	status;		// 状态Gidle,Grunnable,Grunning,Gsyscall,Gwaiting,Gdead
+	int64	goid;		// goroutine的id号
 	uint32	selgen;		// valid sudog pointer
 	int8*	waitreason;	// if status==Gwaiting
 	G*	schedlink;
@@ -257,7 +257,7 @@ struct	G
 	bool	blockingsyscall;	// hint that the next syscall will block
 	int8	raceignore;	// ignore race detection events
 	M*	m;		// for debuggers, but offset not hard-coded
-	M*	lockedm;
+	M*	lockedm;	// G被锁定只能在这个m上运行
 	int32	sig;
 	int32	writenbuf;
 	byte*	writebuf;
@@ -266,31 +266,31 @@ struct	G
 	uintptr	sigcode0;
 	uintptr	sigcode1;
 	uintptr	sigpc;
-	uintptr	gopc;	// pc of go statement that created this goroutine
+	uintptr	gopc;	// 创建这个goroutine的go表达式的pc
 	uintptr	racectx;
 	uintptr	end[];
 };
 struct	M
 {
 	// The offsets of these fields are known to (hard-coded in) libmach.
-	G*	g0;		// goroutine with scheduling stack
-	void	(*morepc)(void);
-	void*	moreargp;	// argument pointer for more stack
-	Gobuf	morebuf;	// gobuf arg to morestack
+	G*	g0;		// 带有调度栈的goroutine
+	void	(*morepc)(void); //用于分段栈增长时传递pc参数
+	void*	moreargp;	// morestack用它来传递发生栈增长函数的参数的指针
+	Gobuf	morebuf;	// morestack函数利用这个结构体来传递参数
 
 	// Fields not known to debuggers.
-	uint32	moreframesize;	// size arguments to morestack
-	uint32	moreargsize;
-	uintptr	cret;		// return value from C
-	uint64	procid;		// for debuggers, but offset not hard-coded
-	G*	gsignal;	// signal-handling G
+	uint32	moreframesize;	// morestack的栈桢大小
+	uint32	moreargsize;	// 参数大小
+	uintptr	cret;		//  从C过来的返回值
+	uint64	procid;		// for debuggers, but offset not hard-coded 物理线程的id?
+	G*	gsignal;	// signal-handling G 处理信号的goroutine
 	uintptr	tls[4];		// thread-local storage (for x86 extern register)
 	void	(*mstartfn)(void);
-	G*	curg;		// current running goroutine
-	P*	p;		// attached P for executing Go code (nil if not executing Go code)
+	G*	curg;		// M中当前运行的goroutine
+	P*	p;		// 关联P以执行Go代码 (如果没有执行Go代码则P为nil)
 	P*	nextp;
 	int32	id;
-	int32	mallocing;
+	int32	mallocing; //状态
 	int32	throwing;
 	int32	gcing;
 	int32	locks;
@@ -305,7 +305,7 @@ struct	M
 	int32	ncgo;		// number of cgo calls currently in progress
 	CgoMal*	cgomal;
 	Note	park;
-	M*	alllink;	// on allm
+	M*	alllink;	// 这个域用于链接allm
 	M*	schedlink;
 	uint32	machport;	// Return address for Mach IPC (OS X)
 	MCache	*mcache;
