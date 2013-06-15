@@ -468,7 +468,7 @@ runtime·starttheworld(void)
 	}
 }
 
-// Called to start an M.
+// 操作系统线程的入口函数。goroutine创建会最终调用到newosproc，进行clone。并把这个函数作为新线程的函数入口
 void
 runtime·mstart(void)
 {
@@ -1189,6 +1189,7 @@ top:
 
 	// M wakeup policy is deliberately somewhat conservative (see nmspinning handling),
 	// so see if we need to wakeup another M here.
+	// M的唤醒策略是故意设计得有点保守。因此，这里看下是否需要唤醒其它的M
 	if (m->p->runqhead != m->p->runqtail &&	//m的p中运行队列不为空
 		runtime·atomicload(&runtime·sched.nmspinning) == 0 &&
 		runtime·atomicload(&runtime·sched.npidle) > 0)  // TODO: fast atomic
