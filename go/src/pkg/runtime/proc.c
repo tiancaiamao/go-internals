@@ -1308,6 +1308,7 @@ void
 		runtime·setprof(false);
 
 	// Leave SP around for gc and traceback.
+	// 记录下调用者的pc,sp等信息 
 	g->sched.sp = (uintptr)runtime·getcallersp(&dummy);
 	g->sched.pc = runtime·getcallerpc(&dummy);
 	g->sched.g = g;
@@ -1322,9 +1323,12 @@ void
 		runtime·throw("entersyscall");
 	}
 
+	//原子加载sysmonwait,如果它不为0
 	if(runtime·atomicload(&runtime·sched.sysmonwait)) {  // TODO: fast atomic
 		runtime·lock(&runtime·sched);
 		if(runtime·atomicload(&runtime·sched.sysmonwait)) {
+			// 将它置为0，添加唤醒信息....这个的意思就是说，目前这个goroutine要进入Gsyscall状态了，它将要让出CPU。
+			// 如果有人在等待CPU的话，会通知唤醒等待者，马上就有CPU可用了
 			runtime·atomicstore(&runtime·sched.sysmonwait, 0);
 			runtime·notewakeup(&runtime·sched.sysmonnote);
 		}

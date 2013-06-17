@@ -144,6 +144,7 @@ runtime·newosproc(M *mp, void *stk)
 
 	// Disable signals during clone, so that the new thread starts
 	// with signals disabled.  It will enable them in minit.
+	// 在clone过程中signals是disable的，这样当新线程开始时就是disable信号的。然后在minit中会enable。
 	runtime·rtsigprocmask(SIG_SETMASK, &sigset_all, &oset, sizeof oset);
 	ret = runtime·clone(flags, stk, mp, mp->g0, runtime·mstart);
 	runtime·rtsigprocmask(SIG_SETMASK, &oset, nil, sizeof oset);
