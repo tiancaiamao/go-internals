@@ -1376,8 +1376,8 @@ void
 		runtime·throw("entersyscallblock");
 	}
 
-	p = releasep();
-	handoffp(p);
+	p = releasep();	
+	handoffp(p); 	//将P切换出来，交给其它M。如果P中有挂了G的，则startm让P运行，否则将P挂到idlep队列
 	if(g->isbackground)  // do not consider blocked scavenger for deadlock detection
 		inclocked(1);
 	runtime·gosave(&g->sched);  // re-save for traceback
@@ -1396,14 +1396,14 @@ runtime·exitsyscall(void)
 	if(m->profilehz > 0)
 		runtime·setprof(true);
 
-	// Try to re-acquire the last P.
+	// 尝试重新获取最后那个P
 	if(m->p && m->p->status == Psyscall && runtime·cas(&m->p->status, Psyscall, Prunning)) {
-		// There's a cpu for us, so we can run.
+		// 仍然有cpu可用，因此可以运行
 		m->mcache = m->p->mcache;
 		m->p->m = m;
 		m->p->tick++;
 		g->status = Grunning;
-		// 垃圾回收没有运行(因为我们还在运行，而垃圾回收必须stop the world)
+		// 垃圾回收没有运行(垃圾回收必须stop the world，而我们在运行，因此垃圾回收不可能在运行)
 		// 因此可以消除gcstack和gcsp
 		g->gcstack = (uintptr)nil;
 		g->gcsp = (uintptr)nil;
@@ -1412,7 +1412,7 @@ runtime·exitsyscall(void)
 
 	if(g->isbackground)  // do not consider blocked scavenger for deadlock detection
 		inclocked(-1);
-	// Try to get any other idle P.
+	// 试着从idle的P队列中获取P
 	m->p = nil;
 	if(runtime·sched.pidle) {
 		runtime·lock(&runtime·sched);
