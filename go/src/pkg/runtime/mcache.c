@@ -49,7 +49,7 @@ runtime·MCache_Alloc(MCache *c, int32 sizeclass, uintptr size, int32 zeroed)
 	return v;
 }
 
-// Take n elements off l and return them to the central free list.
+// 从l中取n个元素并将它们归还到central的自由链表。
 static void
 ReleaseN(MCache *c, MCacheList *l, int32 n, int32 sizeclass)
 {
