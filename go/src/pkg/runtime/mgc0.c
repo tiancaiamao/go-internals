@@ -21,22 +21,30 @@ enum {
 	ScanStackByFrames = 0,
 	IgnorePreciseGC = 0,
 
-	// Four bits per word (see #defines below).
+	// 每个机器字长需要4位标记位
 	wordsPerBitmapWord = sizeof(void*)*8/4,
 	bitShift = sizeof(void*)*8/4,
 
 	handoffThreshold = 4,
 	IntermediateBufferCapacity = 64,
 
-	// Bits in type information
+	// 类型信息中的位
 	PRECISE = 1,
 	LOOP = 2,
 	PC_BITS = PRECISE | LOOP,
 };
 
 // Bits in per-word bitmap.
-// #defines because enum might not be able to hold the values.
+// 因为enum可能不足够容纳这些值，所以用define
 //
+// bitmap中的每个字描述堆中wordsPerBitmapWords个字。
+// 堆中每个机器字长需要用4位bitmap位描述，因此64位系统中，堆中每16个字需要使用一个bitmap字。
+// 字中的位先根据类型打包到一起，然后是堆中位置，因此64位的bitmap字上往下的组成依次是:
+// 16位bitSpecial位，
+// 然后是16位标记位，
+// 然后是16位bitNoPointers/bitBlockBoundary位，
+// 然后是16位分配位。
+// 这样的布局使得遍历给定类型的位十分方便
 // Each word in the bitmap describes wordsPerBitmapWord words
 // of heap memory.  There are 4 bitmap bits dedicated to each heap word,
 // so on a 64-bit system there is one bitmap word per 16 heap words.
@@ -46,12 +54,14 @@ enum {
 // then the 16 bitNoPointers/bitBlockBoundary bits, then the 16 bitAllocated bits.
 // This layout makes it easier to iterate over the bits of a given type.
 //
+// bitmap从mheap.arena_start开始向后扩展。
+// 在64位系统中，arena中偏移off字可以由mheap.arena_start往前off/16+1定位到。
 // The bitmap starts at mheap.arena_start and extends *backward* from
 // there.  On a 64-bit system the off'th word in the arena is tracked by
 // the off/16+1'th word before mheap.arena_start.  (On a 32-bit system,
 // the only difference is that the divisor is 8.)
 //
-// To pull out the bits corresponding to a given pointer p, we use:
+// 给定指针p，计算它相应的位标记：
 //
 //	off = p - (uintptr*)mheap.arena_start;  // word offset
 //	b = (uintptr*)mheap.arena_start - off/wordsPerBitmapWord - 1;
@@ -59,11 +69,12 @@ enum {
 //	bits = *b >> shift;
 //	/* then test bits & bitAllocated, bits & bitMarked, etc. */
 //
-#define bitAllocated		((uintptr)1<<(bitShift*0))
+#define bitAllocated		((uintptr)1<<(bitShift*0))	//分配位
 #define bitNoPointers		((uintptr)1<<(bitShift*1))	/* when bitAllocated is set */
 #define bitMarked		((uintptr)1<<(bitShift*2))	/* when bitAllocated is set */
 #define bitSpecial		((uintptr)1<<(bitShift*3))	/* when bitAllocated is set - has finalizer or being profiled */
 #define bitBlockBoundary	((uintptr)1<<(bitShift*1))	/* when bitAllocated is NOT set */
+//块边界位和无指针位是共用同一位的，区别是分配位置位时才有无指针位，分配位不置位时才有块边界位
 
 #define bitMask (bitBlockBoundary | bitAllocated | bitMarked | bitSpecial)
 
