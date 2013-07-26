@@ -206,6 +206,8 @@ static struct {
 // markonly marks an object. It returns true if the object
 // has been marked by this function, false otherwise.
 // This function doesn't append the object to any buffer.
+// markonly标记一个对象。如果对象被标记了函数返回true，否则返回false。
+// 这个函数不会将对象添加到任何buffer中
 static bool
 markonly(void *obj)
 {
@@ -214,17 +216,18 @@ markonly(void *obj)
 	MSpan *s;
 	PageID k;
 
-	// Words outside the arena cannot be pointers.
+	// Words outside the arena cannot be pointers. 超出了有效区域
 	if(obj < runtime·mheap->arena_start || obj >= runtime·mheap->arena_used)
 		return false;
 
 	// obj may be a pointer to a live object.
 	// Try to find the beginning of the object.
+	// obj可能是指向某个活着的对象的，试着找到对象的起始地址
 
-	// Round down to word boundary.
+	// Round down to word boundary.向下取整的，不是向上取整。堆是自下往上增长的
 	obj = (void*)((uintptr)obj & ~((uintptr)PtrSize-1));
 
-	// Find bits for this word.
+	// 找到这个word的标记位
 	off = (uintptr*)obj - (uintptr*)runtime·mheap->arena_start;
 	bitp = (uintptr*)runtime·mheap->arena_start - off/wordsPerBitmapWord - 1;
 	shift = off % wordsPerBitmapWord;
@@ -232,30 +235,34 @@ markonly(void *obj)
 	bits = xbits >> shift;
 
 	// Pointing at the beginning of a block?
+	// 是否指向分配块的头部？
 	if((bits & (bitAllocated|bitBlockBoundary)) != 0)
 		goto found;
 
 	// Otherwise consult span table to find beginning.
 	// (Manually inlined copy of MHeap_LookupMaybe.)
+	// 通过查询MSpan表，得到分配块边界
 	k = (uintptr)obj>>PageShift;
 	x = k;
 	if(sizeof(void*) == 8)
 		x -= (uintptr)runtime·mheap->arena_start>>PageShift;
 	s = runtime·mheap->map[x];
+	// 不是一个有效的MSpan，返回
 	if(s == nil || k < s->start || k - s->start >= s->npages || s->state != MSpanInUse)
 		return false;
 	p = (byte*)((uintptr)s->start<<PageShift);
-	if(s->sizeclass == 0) {
+	if(s->sizeclass == 0) {	//大对象，整个页分配的
 		obj = p;
 	} else {
 		if((byte*)obj >= (byte*)s->limit)
 			return false;
 		uintptr size = s->elemsize;
-		int32 i = ((byte*)obj - p)/size;
-		obj = p+i*size;
+		int32 i = ((byte*)obj - p)/size;	//obj是这个MSpan中的第几个对象
+		obj = p+i*size;	//定位到对象边界
 	}
 
 	// Now that we know the object header, reload bits.
+	// 找到了对象头部，重新加载位图位
 	off = (uintptr*)obj - (uintptr*)runtime·mheap->arena_start;
 	bitp = (uintptr*)runtime·mheap->arena_start - off/wordsPerBitmapWord - 1;
 	shift = off % wordsPerBitmapWord;
@@ -266,11 +273,14 @@ found:
 	// Now we have bits, bitp, and shift correct for
 	// obj pointing at the base of the object.
 	// Only care about allocated and not marked.
+	// 只关心是否是已分配并且未标记
 	if((bits & (bitAllocated|bitMarked)) != bitAllocated)
 		return false;
 	if(work.nproc == 1)
 		*bitp |= bitMarked<<shift;
 	else {
+		// 有点点想不明白，如果任务分配得好，不同的指针地址在不同的线程中扫描，绝对不会有多线程同时访问同一内存
+		// 完全可以不必要使用CAS操作的
 		for(;;) {
 			x = *bitp;
 			if(x & (bitMarked<<shift))
@@ -289,6 +299,7 @@ found:
 // is moved/flushed to the work buffer (Workbuf).
 // The size of an intermediate buffer is very small,
 // such as 32 or 64 elements.
+// Workbuf是几(2)个内存页大小的，而intermidate buffer很小，只有32或者64个元素
 typedef struct PtrTarget PtrTarget;
 struct PtrTarget
 {

@@ -109,7 +109,7 @@ struct Obj
 	uintptr	ti;	// type info 
 };
 
-// The size of Workbuf is N*PageSize.
+// Workbuf的大小是N倍的内存页大小，放的是Obj的数组
 typedef struct Workbuf Workbuf;
 struct Workbuf
 {
@@ -129,6 +129,7 @@ struct Finalizer
 	uintptr nret;
 };
 
+// 多个Finalizer组成一个FinBlock
 typedef struct FinBlock FinBlock;
 struct FinBlock
 {
