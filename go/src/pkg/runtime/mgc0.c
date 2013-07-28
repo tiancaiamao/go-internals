@@ -339,6 +339,10 @@ static void enqueue(Obj obj, Workbuf **_wbuf, Obj **_wp, uintptr *_nobj);
 //     `----------'
 //     flushptrbuf
 //  (find block start, mark and enqueue)
+// 这个函数作用是对begin到end区域的PtrTaget，如果是mark了的，则将它移到Workbuf中。
+// 函数参数很怪，有的是指针，有的是指针的指针。原因是处理完一部分区域的end就会变化，要返回给调用者的的。ptrbuf和ptrbufpos其实是区域begin和end。
+// 同理，_wbuf是目标Workbuf，_wp本来是属于_wbuf里面的。但是如果_wbuf不够用了就会分配新的Workbuf，所以_wp和_wbuf都会改变并且要返回给调用者，所以是指针的指针。
+// 不就是把一个数组中的满足某条件的东西，拷到另一个数组么？为什么这个函数会写得这么长呢？因为它查看某个地址是否是mark的，没有调用前面函数，而是重新复制了代码...
 static void
 flushptrbuf(PtrTarget *ptrbuf, PtrTarget **ptrbufpos, Obj **_wp, Workbuf **_wbuf, uintptr *_nobj)
 {
@@ -504,6 +508,8 @@ flushptrbuf(PtrTarget *ptrbuf, PtrTarget **ptrbufpos, Obj **_wp, Workbuf **_wbuf
 	*_nobj = nobj;
 }
 
+
+// 跟上面一个函数基本上是一样的，不同之处是上面是任何指针，把在要先计算对应的Obj，而这里本身是Obj就不用计算了
 static void
 flushobjbuf(Obj *objbuf, Obj **objbufpos, Obj **_wp, Workbuf **_wbuf, uintptr *_nobj)
 {
@@ -577,6 +583,7 @@ struct Frame {
 };
 
 // Sanity check for the derived type info objti.
+// 检查obj的类型信息是否是objti所指向的类型信息结构体
 static void
 checkptr(void *obj, uintptr objti)
 {
@@ -590,8 +597,9 @@ checkptr(void *obj, uintptr objti)
 
 	if(obj < runtime·mheap->arena_start || obj >= runtime·mheap->arena_used)
 		return;
+	// 通过指针找到MSpan，MSpan中有类型信息
 	type = runtime·gettype(obj);
-	t = (Type*)(type & ~(uintptr)(PtrSize-1));
+	t = (Type*)(type & ~(uintptr)(PtrSize-1));	//向下对齐
 	if(t == nil)
 		return;
 	x = (uintptr)obj >> PageShift;
@@ -663,6 +671,7 @@ scanblock(Workbuf *wbuf, Obj *wp, uintptr nobj, bool keepworking)
 	Hchan *chan;
 	ChanType *chantype;
 
+	// Workbuf大小是若干(2)个内存页大小
 	if(sizeof(Workbuf) % PageSize != 0)
 		runtime·throw("scanblock: size of Workbuf is suboptimal");
 
@@ -677,6 +686,7 @@ scanblock(Workbuf *wbuf, Obj *wp, uintptr nobj, bool keepworking)
 
 	// Allocate ptrbuf
 	{
+		//bufferList数组是static的，但是每个做gc的m只使用数组中确定的一个，不会冲突
 		scanbuffers = &bufferList[m->helpgc];
 		ptrbuf = &scanbuffers->ptrtarget[0];
 		ptrbuf_end = &scanbuffers->ptrtarget[0] + nelem(scanbuffers->ptrtarget);
@@ -1114,6 +1124,7 @@ scanblock(Workbuf *wbuf, Obj *wp, uintptr nobj, bool keepworking)
 		// the loop by setting b, n, ti to the parameters for the next block.
 
 		if(nobj == 0) {
+			// 将ptrbuf和objbuf刷到Workbuf中去...ptrbuf和objbuf是从前面BufferList是获取的
 			flushptrbuf(ptrbuf, &ptrbufpos, &wp, &wbuf, &nobj);
 			flushobjbuf(objbuf, &objbufpos, &wp, &wbuf, &nobj);
 
@@ -1221,7 +1232,7 @@ debug_scanblock(byte *b, uintptr n)
 	}
 }
 
-// Append obj to the work buffer.
+// 将obj添加到Workbuf中
 // _wbuf, _wp, _nobj are input/output parameters and are specifying the work buffer.
 static void
 enqueue(Obj obj, Workbuf **_wbuf, Obj **_wp, uintptr *_nobj)
@@ -1700,7 +1711,7 @@ sweepspan(ParFor *desc, uint32 idx)
 			// Free large span.
 			runtime·unmarkspan(p, 1<<PageShift);
 			*(uintptr*)p = (uintptr)0xdeaddeaddeaddeadll;	// needs zeroing
-			runtime·MHeap_Free(runtime·mheap, s, 1);
+			runtime·MHeap_Free(runtime·mehap, s, 1);
 			c->local_alloc -= size;
 			c->local_nfree++;
 		} else {
@@ -1835,6 +1846,9 @@ runtime·gchelper(void)
 
 // Initialized from $GOGC.  GOGC=off means no gc.
 //
+// 下次gc是依赖于  额外分配大小/当前正在使用的量
+// 如果gcprecent=100并且当前使用了4M，则下次gc是在8M的时候。
+// 这样可以gc的代价是随着分配量线性增加的
 // Next gc is after we've allocated an extra amount of
 // memory proportional to the amount already in use.
 // If gcpercent=100 and we're using 4M, we'll gc again
@@ -1942,6 +1956,7 @@ runtime·gc(int32 force)
 
 	// Run gc on a bigger stack to eliminate
 	// a potentially large number of calls to runtime·morestack.
+	// 在一个较大的栈上运行gc函数，避免大量地调用到runtime.morestack
 	a.force = force;
 	ap = &a;
 	m->moreframesize_minalloc = StackBig;
