@@ -314,21 +314,26 @@ void	runtime·MCache_ReleaseAll(MCache *c);
 
 // MTypes describes the types of blocks allocated within a span.
 // The compression field describes the layout of the data.
+// MTypes描述MSpan里分配的块的类型。其中compression域描述数据的布局。
 //
 // MTypes_Empty:
+//	所有的块都是free的，或者这个分配块的类型信息不可用。这种情况下data域是无意义的。
 //     All blocks are free, or no type information is available for
 //     allocated blocks.
 //     The data field has no meaning.
 // MTypes_Single:
+//	这个MSpan只包含一个块，data域存放类型信息，sysalloc域无意义
 //     The span contains just one block.
 //     The data field holds the type information.
 //     The sysalloc field has no meaning.
 // MTypes_Words:
+//	这个MSpan包含多个块。这时data指向一个指针数组，数组里每个元素指向相应块的类型信息
 //     The span contains multiple blocks.
 //     The data field points to an array of type [NumBlocks]uintptr,
 //     and each element of the array holds the type of the corresponding
 //     block.
 // MTypes_Bytes:
+//	这个MSpan中包含最多7种不同类型的块。这时data域指向一个结构体，第i个块的类型是data.type[data.index[i]]
 //     The span contains at most seven different types of blocks.
 //     The data field points to the following structure:
 //         struct {
