@@ -327,7 +327,7 @@ void	runtime·MCache_ReleaseAll(MCache *c);
 //     The data field holds the type information.
 //     The sysalloc field has no meaning.
 // MTypes_Words:
-//	这个MSpan包含多个块。这时data指向一个指针数组，数组里每个元素指向相应块的类型信息
+//	这个MSpan包含多个块(块的种类数多于7)。这时data指向一个指针数组，数组里每个元素是相应块的类型信息
 //     The span contains multiple blocks.
 //     The data field points to an array of type [NumBlocks]uintptr,
 //     and each element of the array holds the type of the corresponding

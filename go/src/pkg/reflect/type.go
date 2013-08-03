@@ -6,7 +6,11 @@
 // manipulate objects with arbitrary types.  The typical use is to take a value
 // with static type interface{} and extract its dynamic type information by
 // calling TypeOf, which returns a Type.
+// 反射包实现了运行时反射，允许程序操作任意类型对象。典型的使用方式是接受一个类型为interface{}的值
+// 并通过调用TypeOf提取它的动态类型信息，TypeOf返回一个Type
 //
+// 调用ValueOf返回一个Value，这个Value代表运行时的数据。
+// Zero接受一个Type并返回一个代表这个类型零值的Value
 // A call to ValueOf returns a Value representing the run-time data.
 // Zero takes a Type and returns a Value representing a zero value
 // for that type.
