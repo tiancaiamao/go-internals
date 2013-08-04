@@ -858,7 +858,7 @@ scanblock(Workbuf *wbuf, Obj *wp, uintptr nobj, bool keepworking)
 			if((void*)t >= arena_start && (void*)t < arena_used) {
 				*ptrbufpos++ = (PtrTarget){t, 0};
 				if(ptrbufpos == ptrbuf_end)
-					flushptrbuf(ptrbuf, &ptrbufpos, &wp, &wbuf, &nobj);
+					flushptrbuf(ptrbuf &ptrbufpos, &wp, &wbuf, &nobj);
 			}
 
 			// eface->data
