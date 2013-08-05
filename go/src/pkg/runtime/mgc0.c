@@ -858,7 +858,7 @@ scanblock(Workbuf *wbuf, Obj *wp, uintptr nobj, bool keepworking)
 			if((void*)t >= arena_start && (void*)t < arena_used) {
 				*ptrbufpos++ = (PtrTarget){t, 0};
 				if(ptrbufpos == ptrbuf_end)
-					flushptrbuf(ptrbuf &ptrbufpos, &wp, &wbuf, &nobj);
+					flushptrbuf(ptrbuf, &ptrbufpos, &wp, &wbuf, &nobj);
 			}
 
 			// eface->data
@@ -1711,7 +1711,7 @@ sweepspan(ParFor *desc, uint32 idx)
 			// Free large span.
 			runtime·unmarkspan(p, 1<<PageShift);
 			*(uintptr*)p = (uintptr)0xdeaddeaddeaddeadll;	// needs zeroing
-			runtime·MHeap_Free(runtime·mehap, s, 1);
+			runtime·MHeap_Free(runtime·mheap, s, 1);
 			c->local_alloc -= size;
 			c->local_nfree++;
 		} else {
