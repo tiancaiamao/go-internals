@@ -34,6 +34,7 @@ import (
 // inappropriate to the kind of type causes a run-time panic.
 type Type interface {
 	// Methods applicable to all types.
+	// 适用于所有类型的方法
 
 	// Align returns the alignment in bytes of a value of
 	// this type when allocated in memory.
@@ -45,12 +46,16 @@ type Type interface {
 
 	// Method returns the i'th method in the type's method set.
 	// It panics if i is not in the range [0, NumMethod()).
+	// Method返回类型的方法集合中的第i个方法
+	// 如果i超出了[0, NumMethod())范围则会panic
 	//
 	// For a non-interface type T or *T, the returned Method's Type and Func
 	// fields describe a function whose first argument is the receiver.
+	// 对于非interface类型T或者*T，返回的Type和Func域描述一个首个参数是方法接收者的函数
 	//
 	// For an interface type, the returned Method's Type field gives the
 	// method signature, without a receiver, and the Func field is nil.
+	// 对于interface类型，返回的方法类型域给出方法的签名，不带接收者，Func域为空
 	Method(int) Method
 
 	// MethodByName returns the method with that name in the type's
@@ -101,6 +106,7 @@ type Type interface {
 
 	// Methods applicable only to some types, depending on Kind.
 	// The methods allowed for each kind are:
+	// 特定于某些Type的方法，由Kind决定
 	//
 	//	Int*, Uint*, Float*, Complex*: Bits
 	//	Array: Elem, Len
@@ -233,6 +239,7 @@ const (
 )
 
 // rtype is the common implementation of most values.
+// rtype是大多数值的公共实现，跟runtime/type.h中的Type结构体是一样的
 // It is embedded in other, public struct types, but always
 // with a unique tag like `reflect:"array"` or `reflect:"ptr"`
 // so that code cannot convert from, say, *arrayType to *ptrType.
@@ -251,6 +258,7 @@ type rtype struct {
 }
 
 // Method on non-interface type
+// 非interface类型的方法表
 type method struct {
 	name    *string        // name of method
 	pkgPath *string        // nil for exported Names; otherwise import path
@@ -261,6 +269,8 @@ type method struct {
 }
 
 // uncommonType is present only for types with names or methods
+// uncommonType是用于有名字或方法的类型的。如果T是一个命名的类型，则uncommonType用于T和带方法的*T
+//
 // (if T is a named type, the uncommonTypes for T and *T have methods).
 // Using a pointer to this struct reduces the overall size required
 // to describe an unnamed type with no methods.
@@ -519,6 +529,7 @@ func (t *uncommonType) MethodByName(name string) (m Method, ok bool) {
 // TODO(rsc): 6g supplies these, but they are not
 // as efficient as they could be: they have commonType
 // as the receiver instead of *rtype.
+// 如果是interface，类型转换为interface后调用NumMethod。否则调用uncommonType中的NumMethod
 func (t *rtype) NumMethod() int {
 	if t.Kind() == Interface {
 		tt := (*interfaceType)(unsafe.Pointer(t))
@@ -1161,6 +1172,7 @@ func implements(T, V *rtype) bool {
 	// This lets us run the scan in overall linear time instead of
 	// the quadratic time  a naive search would require.
 	// See also ../runtime/iface.c.
+	// 方法表是排过序的，因此是线性时间扫描
 	if V.Kind() == Interface {
 		v := (*interfaceType)(unsafe.Pointer(V))
 		i := 0
