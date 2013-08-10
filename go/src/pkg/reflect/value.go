@@ -42,6 +42,7 @@ func memmove(adst, asrc unsafe.Pointer, n uintptr) {
 }
 
 // Value is the reflection interface to a Go value.
+// Value是Go的值的反射interface
 //
 // Not all methods apply to all kinds of values.  Restrictions,
 // if any, are noted in the documentation for each method.
@@ -55,14 +56,18 @@ func memmove(adst, asrc unsafe.Pointer, n uintptr) {
 // Most functions and methods never return an invalid value.
 // If one does, its documentation states the conditions explicitly.
 //
+// Value可以被多个goroutines并行地使用，只要底层的Go值是可以被并行使用的
 // A Value can be used concurrently by multiple goroutines provided that
 // the underlying Go value can be used concurrently for the equivalent
 // direct operations.
 type Value struct {
-	// typ holds the type of the value represented by a Value.
+	// typ holds the type of the value represented by a Value.值中是带类型信息的
 	typ *rtype
 
 	// val holds the 1-word representation of the value.
+	// val存1个字来表示value。如果设置了标记位的flagIndir位，那么val是指向数据的指针。
+	// 否则val是直接存放数据的一个字，当数据小于一个字长时，它起始位置是val的第一个字节(按内存寻址方式)
+	// 使用unsafe.Pointer因此垃圾回收器知道这个val可能是一个指针。
 	// If flag's flagIndir bit is set, then val is a pointer to the data.
 	// Otherwise val is a word holding the actual data.
 	// When the data is smaller than a word, it begins at
@@ -84,6 +89,8 @@ type Value struct {
 	// If typ.size > ptrSize, code can assume that flagIndir is set.
 	flag
 
+	// 方法值表示一个方法调用。比如r.Read对于给定的接收者r，typ+val+flag位描述接收者r，
+	// 但是flag的Kind位表明这是一个函数类型，并且flag的高位指定它在r的type中的方法表中的编号。
 	// A method value represents a curried method invocation
 	// like r.Read for some receiver r.  The typ+val+flag bits describe
 	// the receiver r, but the flag's Kind bits say Func (methods are
@@ -210,6 +217,7 @@ func storeIword(p unsafe.Pointer, w iword, n uintptr) {
 }
 
 // emptyInterface is the header for an interface{} value.
+// emptyInterface是interface{}值的头部
 type emptyInterface struct {
 	typ  *rtype
 	word iword
@@ -2039,6 +2047,7 @@ func Indirect(v Value) Value {
 
 // ValueOf returns a new Value initialized to the concrete value
 // stored in the interface i.  ValueOf(nil) returns the zero Value.
+// ValueOf返回一个新的Value，这个Value被初始化成interface中存储的精确值。
 func ValueOf(i interface{}) Value {
 	if i == nil {
 		return Value{}

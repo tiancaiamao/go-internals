@@ -20,9 +20,10 @@ runtime·printeface(Eface e)
 	runtime·printf("(%p,%p)", e.type, e.data);
 }
 
-static	Itab*	hash[1009];
+static	Itab*	hash[1009];	//1009是质数吧？
 static	Lock	ifacelock;
 
+// 测试某个类型type是否实现了接口inter，返回
 static Itab*
 itab(InterfaceType *inter, Type *type, int32 canfail)
 {
@@ -57,6 +58,7 @@ itab(InterfaceType *inter, Type *type, int32 canfail)
 	// TODO(rsc): h += 23 * x->mhash ?
 	h %= nelem(hash);
 
+	// 弄了个hash表加速，不用每次都死板地去比较是否type实现了inter中所有的方法，然后把type中的方法复制过去，再返回
 	// look twice - once without lock, once with.
 	// common case will be no lock contention.
 	for(locked=0; locked<2; locked++) {
@@ -91,6 +93,7 @@ itab(InterfaceType *inter, Type *type, int32 canfail)
 
 search:
 	// both inter and type have method sorted by name,
+	// inter和type都是按名称排序了的，因此只的扫描一遍，O(ni+nt)
 	// and interface names are unique,
 	// so can iterate over both in lock step;
 	// the loop is O(ni+nt) not O(ni*nt).
@@ -121,6 +124,7 @@ search:
 			if(t->mtyp == itype && t->name == iname && t->pkgPath == ipkgPath)
 				break;
 		}
+		// 扫描的同时，把type中的方法表复制过来
 		if(m)
 			m->fun[i - inter->m] = t->ifn;
 	}
@@ -170,6 +174,7 @@ copyout(Type *t, void **src, void *dst)
 		alg->copy(size, dst, *src);
 }
 
+// 系统的类型转换函数
 #pragma textflag 7
 void
 runtime·typ2Itab(Type *t, InterfaceType *inter, Itab **cache, Itab *ret)
@@ -233,6 +238,7 @@ runtime·assertI2T(Type *t, Iface i, ...)
 	assertI2Tret(t, i, ret);
 }
 
+// 比如 i.(T)这种表达式会调用到这个函数，测试某个interface是否为某个类型T
 static void
 assertI2Tret(Type *t, Iface i, byte *ret)
 {
