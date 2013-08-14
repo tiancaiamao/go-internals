@@ -10,6 +10,7 @@ import (
 )
 
 // A Dialer contains options for connecting to an address.
+// Dialer包含了连接选项
 //
 // The zero value for each field is equivalent to dialing
 // without that option. Dialing with the zero value of Dialer
@@ -21,6 +22,7 @@ type Dialer struct {
 	//
 	// The default is no timeout.
 	//
+	// 不管是否设置超时，操作系统都可能加上它自已设置的超时，例如，TCP超时是大概3分钟
 	// With or without a timeout, the operating system may impose
 	// its own earlier timeout. For instance, TCP timeouts are
 	// often around 3 minutes.
@@ -30,6 +32,7 @@ type Dialer struct {
 	// will fail. If Timeout is set, it may fail earlier.
 	// Zero means no deadline, or dependent on the operating system
 	// as with the Timeout option.
+	// 按绝对时间算的，超过这个时间点后连接会失败
 	Deadline time.Time
 
 	// LocalAddr is the local address to use when dialing an

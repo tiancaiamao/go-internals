@@ -4,6 +4,7 @@
 
 // Simple file i/o and string manipulation, to avoid
 // depending on strconv and bufio and strings.
+// 简化i/o和字符串操作，避免对strconv，bufio和strings的依赖
 
 package net
 
