@@ -15,8 +15,10 @@ package net
 // A particular implementation (epoll/kqueue) must define the following functions:
 // void runtime·netpollinit(void);			// to initialize the poller
 // int32 runtime·netpollopen(int32 fd, PollDesc *pd);	// to arm edge-triggered notifications
+// 边沿触发通知。关联fd和pd
 							// and associate fd with pd.
 // An implementation must call the following function to denote that the pd is ready.
+// 实现必须调用下面这个函数来表示fd是就绪的
 // void runtime·netpollready(G **gpp, PollDesc *pd, int32 mode);
 
 #define READY ((G*)1)
@@ -31,7 +33,7 @@ struct PollDesc
 	G*	rg;	// G waiting for read or READY (binary semaphore)
 	Timer	rt;	// read deadline timer (set if rt.fv != nil)
 	int64	rd;	// read deadline
-	G*	wg;	// the same for writes
+	G*	wg;	// the same for writes 因写这个fd而阻塞的goroutines
 	Timer	wt;
 	int64	wd;
 };
@@ -40,6 +42,8 @@ static struct
 {
 	Lock;
 	PollDesc*	first;
+	// PollDesc对象必须是类型稳定的，因为我们可以在描述符关闭/重用之后得到epoll/kqueue就绪通知
+	// 稳定的通知是通过使用序号实现的，当deadline改变或者描述符重用时，序号会增加
 	// PollDesc objects must be type-stable,
 	// because we can get ready notification from epoll/kqueue
 	// after the descriptor is closed/reused.

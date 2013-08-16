@@ -1,21 +1,21 @@
 # 附录B Go的源代码目录结构
 下载Go源码后，根目录结构如下：
 
-|– AUTHORS — 文件，官方 Go语言作者列表
-|– CONTRIBUTORS — 文件，第三方贡献者列表
-|– LICENSE — 文件，Go语言发布授权协议
-|– PATENTS — 文件，专利
-|– README — 文件，README文件，大家懂的。提一下，经常有人说：Go官网打不开啊，怎么办？其实，在README中说到了这个。该文件还提到，如果通过二进制安装，需要设置GOROOT环境变量；如果你将Go放在了/usr/local/go中，则可以不设置该环境变量（Windows下是C:\go）。当然，建议不管什么时候都设置GOROOT。另外，确保$GOROOT/bin在PATH目录中。
-|– VERSION — 文件，当前Go版本
-|– api — 目录，包含所有API列表，方便IDE使用
-|– doc — 目录，Go语言的各种文档，官网上有的，这里基本会有，这也就是为什么说可以本地搭建”官网”。这里面有不少其他资源，比如gopher图标之类的。
-|– favicon.ico — 文件，官网logo
-|– include — 目录，Go 基本工具依赖的库的头文件
-|– lib — 目录，文档模板
-|– misc — 目录，其他的一些工具，相当于大杂烩，大部分是各种编辑器的Go语言支持，还有cgo的例子等
-|– robots.txt — 文件，搜索引擎robots文件
-|– src — 目录，Go语言源码：基本工具（编译器等）、标准库
-`– test — 目录，包含很多测试程序（并非_test.go方式的单元测试，而是包含main包的测试），包括一些fixbug测试。可以通过这个学到一些特性的使用。
+	|– AUTHORS — 文件，官方 Go语言作者列表
+	|– CONTRIBUTORS — 文件，第三方贡献者列表
+	|– LICENSE — 文件，Go语言发布授权协议
+	|– PATENTS — 文件，专利
+	|– README — 文件，README文件，大家懂的。提一下，经常有人说：Go官网打不开啊，怎么办？其实，在README中说到了这个。该文件还提到，如果通过二进制安装，需要设置GOROOT环境变量；如果你将Go放在了/usr/local/go中，则可以不设置该环境变量（Windows下是C:\go）。当然，建议不管什么时候都设置GOROOT。另外，确保$GOROOT/bin在PATH目录中。
+	|– VERSION — 文件，当前Go版本
+	|– api — 目录，包含所有API列表，方便IDE使用
+	|– doc — 目录，Go语言的各种文档，官网上有的，这里基本会有，这也就是为什么说可以本地搭建”官网”。这里面有不少其他资源，比如gopher图标之类的。
+	|– favicon.ico — 文件，官网logo
+	|– include — 目录，Go 基本工具依赖的库的头文件
+	|– lib — 目录，文档模板
+	|– misc — 目录，其他的一些工具，相当于大杂烩，大部分是各种编辑器的Go语言支持，还有cgo的例子等
+	|– robots.txt — 文件，搜索引擎robots文件
+	|– src — 目录，Go语言源码：基本工具（编译器等）、标准库
+	`– test — 目录，包含很多测试程序（并非_test.go方式的单元测试，而是包含main包的测试），包括一些fixbug测试。可以通过这个学到一些特性的使用。
 
 下面详细介绍一些目录（可能分功能介绍）
 
@@ -270,3 +270,312 @@ run.bash/run.bat — 测试标准库
 Make.dist 被其他Makefile文件引用，比如cmd下面的很多工具中的Makefile文件。这个文件的作用是：运行go tool dist去安装命令，同时在安装过程中会打印出执行了该文件的目录名。可见，在源码安装Go的过程中，打印出的大部分信息就是这个文件的作用。
 
 ## 五、src/pkg Go标准库源码
+
+1) runtime目录
+
+	|── alg.c 	Type结构体中的alg，类型操作。
+	|── append_test.go
+	|── arch_386.h
+	|── arch_amd64.h
+	|── arch_arm.h
+	|── asm_386.s 	
+	|── asm_amd64.s
+	|── asm_arm.s
+	|── atomic_386.c
+	|── atomic_amd64.c
+	|── atomic_arm.c
+	|── callback_windows_386.c
+	|── callback_windows_amd64.c
+	|── cgo
+	|   ├── asm_386.s
+	|   ├── asm_amd64.s
+	|   ├── asm_arm.s
+	|   ├── callbacks.c
+	|   ├── cgo.go
+	|   ├── cgo_arm.c
+	|   ├── freebsd.c
+	|   ├── gcc_386.S
+	|   ├── gcc_amd64.S
+	|   ├── gcc_arm.S
+	|   ├── gcc_darwin_386.c
+	|   ├── gcc_darwin_amd64.c
+	|   ├── gcc_freebsd_386.c
+	|   ├── gcc_freebsd_amd64.c
+	|   ├── gcc_freebsd_arm.c
+	|   ├── gcc_linux_386.c
+	|   ├── gcc_linux_amd64.c
+	|   ├── gcc_linux_arm.c
+	|   ├── gcc_netbsd_386.c
+	|   ├── gcc_netbsd_amd64.c
+	|   ├── gcc_netbsd_arm.c
+	|   ├── gcc_openbsd_386.c
+	|   ├── gcc_openbsd_amd64.c
+	|   ├── gcc_setenv.c
+	|   ├── gcc_util.c
+	|   ├── gcc_windows_386.c
+	|   ├── gcc_windows_amd64.c
+	|   ├── iscgo.c
+	|   ├── libcgo.h
+	|   ├── netbsd.c
+	|   ├── openbsd.c
+	|   └── setenv.c
+	|── cgocall.c
+	|── cgocall.h
+	|── chan.c 	通道的实现
+	|── compiler.go
+	|── complex.c
+	|── cpuprof.c 	pprof相关
+	|── debug
+	|   ├── debug.c
+	|   ├── garbage.go
+	|   ├── garbage_test.go
+	|   ├── stack.go
+	|   └── stack_test.go
+	|── debug.go
+	|── defs1_linux.go
+	|── defs2_linux.go
+	|── defs_arm_linux.go
+	|── defs_darwin.go
+	|── defs_darwin_386.h
+	|── defs_darwin_amd64.h
+	|── defs_freebsd.go
+	|── defs_freebsd_386.h
+	|── defs_freebsd_amd64.h
+	|── defs_freebsd_arm.h
+	|── defs_linux.go
+	|── defs_linux_386.h
+	|── defs_linux_amd64.h
+	|── defs_linux_arm.h
+	|── defs_netbsd.go
+	|── defs_netbsd_386.go
+	|── defs_netbsd_386.h
+	|── defs_netbsd_amd64.go
+	|── defs_netbsd_amd64.h
+	|── defs_netbsd_arm.go
+	|── defs_netbsd_arm.h
+	|── defs_openbsd.go
+	|── defs_openbsd_386.h
+	|── defs_openbsd_amd64.h
+	|── defs_plan9_386.h
+	|── defs_plan9_amd64.h
+	|── defs_windows.go
+	|── defs_windows_386.h
+	|── defs_windows_amd64.h
+	|── env_plan9.c
+	|── env_posix.c
+	|── error.go
+	|── extern.go
+	|── float.c
+	|── gc_test.go
+	|── hashmap.c 	map容器的底层实现
+	|── hashmap.h
+	|── hashmap_fast.c
+	|── iface.c 	interface的底层实现
+	|── lfstack.c 	垃圾回收中用到了这个文件，lock free stack的缩写。垃圾回收中，利用来实现PtrBuffer的并发安全性
+	|── lock_futex.c
+	|── lock_sema.c
+	|── malloc.goc 	malloc相关的封装，提供了runtime.mallocgc
+	|── malloc.h
+	|── malloc1.go
+	|── mallocrand.go
+	|── mallocrep.go
+	|── mallocrep1.go
+	|── mcache.c	内存管理实现相关，MCache层次的数据结构和操作
+	|── mcentral.c 	内存管理实现相关，MCentral层次的数据结构和操作
+	|── mem.go 	内存信息统计
+	|── mem_darwin.c
+	|── mem_freebsd.c
+	|── mem_linux.c 	内存分配相关，依赖于系统部分的分配函数。最下层接口，这里提供SysAlloc分配大块内存，提供runtime内存池使用
+	|── mem_netbsd.c
+	|── mem_openbsd.c
+	|── mem_plan9.c
+	|── mem_windows.c
+	|── memclr_arm.s
+	|── memmove_386.s
+	|── memmove_amd64.s
+	|── memmove_arm.s
+	|── memmove_linux_amd64_test.go
+	|── mfinal.c
+	|── mfinal_test.go
+	|── mfixalloc.c
+	|── mgc0.c 	垃圾回收最核心的部分都是在这一个文件里实现的
+	|── mgc0.go
+	|── mgc0.h
+	|── mheap.c 	内存管理实现相关，MHeap层次的数据结构和操作
+	|── mkversion.c
+	|── mprof.goc 	pprof相关
+	|── msize.c
+	|── netpoll.goc
+	|── netpoll_epoll.c 	封装了依赖到系统的epoll，对Go提供runtime.netpoll相关的函数
+	|── netpoll_kqueue.c
+	|── netpoll_stub.c
+	|── os_darwin.c
+	|── os_darwin.h
+	|── os_freebsd.c
+	|── os_freebsd.h
+	|── os_freebsd_arm.c
+	|── os_linux.c 	goroutine相关，依赖于系统的部分。runtime.newosproc，runtime.minit等函数都在这里实现
+	|── os_linux.h
+	|── os_linux_386.c
+	|── os_linux_arm.c
+	|── os_netbsd.c
+	|── os_netbsd.h
+	|── os_netbsd_386.c
+	|── os_netbsd_amd64.c
+	|── os_netbsd_arm.c
+	|── os_openbsd.c
+	|── os_openbsd.h
+	|── os_plan9.c
+	|── os_plan9.h
+	|── os_plan9_386.c
+	|── os_plan9_amd64.c
+	|── os_windows.c
+	|── os_windows.h
+	|── os_windows_386.c
+	|── os_windows_amd64.c
+	|── panic.c
+	|── parfor.c 	垃圾回收相关，提供了并行方面的支持
+	|── pprof
+	|   ├── pprof.go
+	|   └── pprof_test.go
+	|── print.c
+	|── proc.c 		goroutine调度器
+	|── proc.p
+	|── proc_test.go
+	|── race
+	|   ├── README
+	|   ├── doc.go
+	|   ├── race.go
+	|   ├── race_darwin_amd64.syso
+	|   ├── race_linux_amd64.syso
+	|   ├── race_test.go
+	|   ├── race_windows_amd64.syso
+	|   └── testdata
+	|       ├── atomic_test.go
+	|       ├── cgo_test.go
+	|       ├── cgo_test_main.go
+	|       ├── chan_test.go
+	|       ├── comp_test.go
+	|       ├── finalizer_test.go
+	|       ├── io_test.go
+	|       ├── map_test.go
+	|       ├── mop_test.go
+	|       ├── mutex_test.go
+	|       ├── regression_test.go
+	|       ├── rwmutex_test.go
+	|       ├── select_test.go
+	|       ├── slice_test.go
+	|       ├── sync_test.go
+	|       └── waitgroup_test.go
+	|── race.c
+	|── race.go
+	|── race.h
+	|── race0.c
+	|── race_amd64.s
+	|── rt0_darwin_386.s
+	|── rt0_darwin_amd64.s
+	|── rt0_freebsd_386.s
+	|── rt0_freebsd_amd64.s
+	|── rt0_freebsd_arm.s
+	|── rt0_linux_386.s
+	|── rt0_linux_amd64.s 	生成可执行文件的入口，包括main函数等
+	|── rt0_linux_arm.s
+	|── rt0_netbsd_386.s
+	|── rt0_netbsd_amd64.s
+	|── rt0_netbsd_arm.s
+	|── rt0_openbsd_386.s
+	|── rt0_openbsd_amd64.s
+	|── rt0_plan9_386.s
+	|── rt0_plan9_amd64.s
+	|── rt0_windows_386.s
+	|── rt0_windows_amd64.s
+	|── rune.c
+	|── runtime-gdb.py
+	|── runtime.c
+	|── runtime.h 	几乎大部分的数据结构都是在这个文件中定义的
+	|── runtime1.goc
+	|── runtime_linux_test.go
+	|── runtime_test.go
+	|── sema.goc
+	|── signal_386.c
+	|── signal_amd64.c
+	|── signal_arm.c
+	|── signal_darwin_386.h
+	|── signal_darwin_amd64.h
+	|── signal_freebsd_386.h
+	|── signal_freebsd_amd64.h
+	|── signal_freebsd_arm.h
+	|── signal_linux_386.h
+	|── signal_linux_amd64.h
+	|── signal_linux_arm.h
+	|── signal_netbsd_386.h
+	|── signal_netbsd_amd64.h
+	|── signal_netbsd_arm.h
+	|── signal_openbsd_386.h
+	|── signal_openbsd_amd64.h
+	|── signal_unix.c
+	|── signal_unix.h
+	|── signals_darwin.h
+	|── signals_freebsd.h
+	|── signals_linux.h
+	|── signals_netbsd.h
+	|── signals_openbsd.h
+	|── signals_plan9.h
+	|── signals_windows.h
+	|── sigqueue.goc
+	|── slice.c 	slice的底层实现
+	|── softfloat64.go
+	|── softfloat64_test.go
+	|── softfloat_arm.c
+	|── stack.c 	runtime.newstack函数是这里实现的
+	|── stack.h 	这个文件里的注释很重要，讲了Go里使用的栈结构
+	|── string.goc
+	|── string_test.go
+	|── symtab.c
+	|── symtab_test.go
+	|── sys_darwin_386.s
+	|── sys_darwin_amd64.s
+	|── sys_freebsd_386.s
+	|── sys_freebsd_amd64.s
+	|── sys_freebsd_arm.s
+	|── sys_linux_386.s
+	|── sys_linux_amd64.s 	封装了重要的系统调用，提供runtime.xx的函数，比如runtime.read
+	|── sys_linux_arm.s
+	|── sys_netbsd_386.s
+	|── sys_netbsd_amd64.s
+	|── sys_netbsd_arm.s
+	|── sys_openbsd_386.s
+	|── sys_openbsd_amd64.s
+	|── sys_plan9_386.s
+	|── sys_plan9_amd64.s
+	|── sys_windows_386.s
+	|── sys_windows_amd64.s
+	|── syscall_windows.goc
+	|── syscall_windows_test.go
+	|── time.goc
+	|── time_plan9_386.c
+	|── traceback_arm.c
+	|── traceback_x86.c
+	|── type.go
+	|── type.h 		类型系统，里面有Type结构体的定义。interface以及reflect也依赖于这里一些东西
+	|── typekind.h 	类型系统，提供了Type中的kind编号
+	|── vdso_linux_amd64.c
+	|── vlop_386.s
+	|── vlop_arm.s
+	|── vlop_arm_test.go
+	|── vlrt_386.c
+	|── vlrt_arm.c
+	|── zasm_darwin_amd64.h
+	|── zgoarch_amd64.go
+	|── zgoos_darwin.go
+	|── zmalloc_darwin_amd64.c
+	|── zmprof_darwin_amd64.c
+	|── znetpoll_darwin_amd64.c
+	|── zruntime1_darwin_amd64.c
+	|── zruntime_defs_darwin_amd64.go
+	|── zsema_darwin_amd64.c
+	|── zsigqueue_darwin_amd64.c
+	|── zstring_darwin_amd64.c
+	|── ztime_darwin_amd64.c
+	|── zversion.go
+
