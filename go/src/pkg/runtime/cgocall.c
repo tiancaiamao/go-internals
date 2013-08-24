@@ -184,6 +184,9 @@ runtime·cgocall(void (*fn)(void*), void *arg)
 	 * so it is safe to call while "in a system call", outside
 	 * the $GOMAXPROCS accounting.
 	 */
+	/* 宣布我们进入了系统调用，这样调度器知道在我们运行外部代码时，它可以创建一个新的M来运行goroutine
+	 * 调用asmcgocall是不会分裂栈并且不会分配内存的，因此可以完全地在"syscall call"时调用，不管$GOMAXPROCS计数
+	 */
 	if(g->blockingsyscall) {
 		g->blockingsyscall = false;
 		runtime·entersyscallblock();
@@ -214,6 +217,7 @@ endcgo(void)
 		runtime·raceacquire(&cgosync);
 }
 
+//CgoCall的数量
 void
 runtime·NumCgoCall(int64 ret)
 {
@@ -226,7 +230,7 @@ runtime·NumCgoCall(int64 ret)
 }
 
 // Helper functions for cgo code.
-
+// cgo代码的辅助函数
 void (*_cgo_malloc)(void*);
 void (*_cgo_free)(void*);
 
@@ -251,9 +255,10 @@ runtime·cfree(void *p)
 }
 
 // Call from C back to Go.
-
+// C调用Go函数
 static FuncVal unwindmf = {unwindm};
 
+// fn是Go函数
 void
 runtime·cgocallbackg(FuncVal *fn, void *arg, uintptr argsize)
 {
