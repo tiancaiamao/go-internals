@@ -556,6 +556,7 @@ TEXT runtime·asmcgocall(SB),7,$0
 // cgocallback(void (*fn)(void*), void *frame, uintptr framesize)
 // Turn the fn into a Go func (by taking its address) and call
 // cgocallback_gofunc.
+// 将fn转换为一个Go函数，然后调用cgocallback_gofunc
 TEXT runtime·cgocallback(SB),7,$24
 	LEAQ	fn+0(FP), AX
 	MOVQ	AX, 0(SP)
@@ -570,6 +571,9 @@ TEXT runtime·cgocallback(SB),7,$24
 // cgocallback_gofunc(FuncVal*, void *frame, uintptr framesize)
 // See cgocall.c for more details.
 TEXT runtime·cgocallback_gofunc(SB),7,$24
+	// 如果m为空，Go不会创建一个当前线程，而是调用needm获取一个临时使用。
+	// 这种情况下，我们运行在线程栈中，因此有很大的可用空间，但是链接器并不知道。
+	// 为了避免链接器那边分析使用分段栈，直接通过AX调用
 	// If m is nil, Go did not create the current thread.
 	// Call needm to obtain one for temporary use.
 	// In this case, we're running on the thread stack, so there's
@@ -593,6 +597,9 @@ needm:
 	MOVQ	m(CX), BP
 
 havem:
+	// 现在m是有效的，我们运行在m->g0栈中。所以当前m->g0->sched.sp中保存的是上个切换进系统栈的goroutine的sp
+	// 保存当前的m->g0->sched.sp到栈中，并将SP寄存器设置为它。
+	// 保存当前的sp到m->g0->sched.sp以准备好切换回m->curg栈
 	// Now there's a valid m, and we're running on its m->g0.
 	// Save current m->g0->sched.sp on stack and then set it to SP.
 	// Save current sp in m->g0->sched.sp in preparation for
@@ -601,6 +608,9 @@ havem:
 	PUSHQ	(g_sched+gobuf_sp)(SI)
 	MOVQ	SP, (g_sched+gobuf_sp)(SI)
 
+	// 切换到m->curg的栈并调用runtime.cgocallbackg，使用三个参数。
+	// 由于我们现在接管了m->curg的执行，但是却*没有*恢复到之前的运行环境，因此我们需要保存信息到m->curg->gobuf。
+	// 这样当我们完成后可以恢复它。
 	// Switch to m->curg stack and call runtime.cgocallbackg
 	// with the three arguments.  Because we are taking over
 	// the execution of m->curg but *not* resuming what had
