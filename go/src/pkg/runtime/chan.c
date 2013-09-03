@@ -33,20 +33,21 @@ struct	WaitQ
 	SudoG*	last;
 };
 
+// 垃圾回收器假定Hchan中只包含指向栈中数据的指针，不包含指向堆数据的指针。
 // The garbage collector is assuming that Hchan can only contain pointers into the stack
 // and cannot contain pointers into the heap.
 struct	Hchan
 {
-	uintgo	qcount;			// total data in the q
-	uintgo	dataqsiz;		// size of the circular q
+	uintgo	qcount;			// 队列q中的总数据数量
+	uintgo	dataqsiz;		// 环形队列q的数据大小
 	uint16	elemsize;
 	bool	closed;
 	uint8	elemalign;
 	Alg*	elemalg;		// interface for element type
-	uintgo	sendx;			// send index
-	uintgo	recvx;			// receive index
-	WaitQ	recvq;			// list of recv waiters
-	WaitQ	sendq;			// list of send waiters
+	uintgo	sendx;			// 发送index
+	uintgo	recvx;			// 接收index
+	WaitQ	recvq;			// 因recv而阻塞的等待队列
+	WaitQ	sendq;			// 因send而阻塞的等待队列
 	Lock;
 };
 
@@ -64,6 +65,7 @@ enum
 	CaseDefault,
 };
 
+// select和case语句都被编译成了下面两个结构体，代码变成了数据
 struct	Scase
 {
 	SudoG	sg;			// must be first member (cast to Scase)
@@ -76,11 +78,11 @@ struct	Scase
 
 struct	Select
 {
-	uint16	tcase;			// total count of scase[]
-	uint16	ncase;			// currently filled scase[]
-	uint16*	pollorder;		// case poll order
-	Hchan**	lockorder;		// channel lock order
-	Scase	scase[1];		// one per case (in order of appearance)
+	uint16	tcase;			// 总的scase[]数量
+	uint16	ncase;			// 当前填充了的scase[]数量
+	uint16*	pollorder;		// case的poll次序
+	Hchan**	lockorder;		// channel的锁住的次序
+	Scase	scase[1];		// 每个case会在结构体里有一个Scase，顺序是按出现的次序
 };
 
 static	void	dequeueg(WaitQ*);
@@ -89,6 +91,7 @@ static	void	enqueue(WaitQ*, SudoG*);
 static	void	destroychan(Hchan*);
 static	void	racesync(Hchan*, SudoG*);
 
+// 创建channal   make(chan[T], hint)
 Hchan*
 runtime·makechan_c(ChanType *t, int64 hint)
 {
