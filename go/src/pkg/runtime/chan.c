@@ -159,6 +159,10 @@ runtime·makechan(ChanType *t, int64 hint, Hchan *ret)
  * been closed.  it is easiest to loop and re-run
  * the operation; we'll see that it's now closed.
  */
+ /*
+ * 通用的单通道send/recv。如果bool指针pres是nil，那么会发生完全交换。
+ * 如果pres不为nil，那么协议不会sleep，但如果它不能完成则会返回
+ */
 void
 runtime·chansend(ChanType *t, Hchan *c, byte *ep, bool *pres, void *pc)
 {
@@ -431,6 +435,7 @@ asynch:
 		runtime·blockevent(mysg.releasetime - t0, 2);
 	return;
 
+// 读一个closed了的通道，会返回这个通道类型的零值
 closed:
 	if(ep != nil)
 		c->elemalg->copy(c->elemsize, ep, nil);
