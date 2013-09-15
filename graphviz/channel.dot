@@ -1,0 +1,14 @@
+digraph {
+	rankdir = LR;
+	node[shape=record]
+	Hchan[label="struct\ Hchan|qcount|dataqsize|elemsize|<Alg>alg|sendx|recvx|<recvq>recvq|<sendq>sendq|LOCK|..."]
+	WaitQ[label="struct\ WaitQ|{<first>first|<last>last}"]
+	SudoG1[label="struct\ SudoG|{G*\ g|byte*\ elem|<link>next}"]
+	SudoG2[label="struct\ SudoG|{G*\ g|byte*\ elem}"]
+	dots[shape="plaintext",label="..."]
+	Hchan:recvq->WaitQ
+	WaitQ:first:s->SudoG1
+	WaitQ:last:se->SudoG2
+	SudoG1:link->dots->SudoG2
+	{rank=same;WaitQ, SudoG1}
+}
