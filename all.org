@@ -759,3 +759,121 @@ http://shiningray.cn/tcmalloc-thread-caching-malloc.html tcmalloc内存管理
 2对象怎样调用方法
 3组合对象(或接口)后怎样调用方法
 4接口怎样调用方法
+
+
+
+传值和传引用
+
+func httpGet(url string, wg sync.WaitGroup) {
+        defer wg.Done()
+        http.Get(url)    
+}
+var wg sync.WaitGroup
+var urls = []string{
+    "http://www.golang.org/",
+    "http://www.google.com/",
+    "http://www.somestupidname.com/",
+}
+for _, url := range urls {
+    wg.Add(1)
+    go httpGet(url, wg)
+}
+wg.Wait()
+
+运行，会发生程序死锁。为什么呢？因为Go语言是传值约定
+
+go httpGet(url, wg)
+
+httpGet中的wg实际上是复制的一份参数，对它的修改不会影响到原来的wg，也就是wg.Done()不会减少原来的wg的计数，于是发生了死锁。
+
+
+
+map中使用[]操作符获得的对象是不能直接修改状态
+
+1.直接对map对象使用[]操作符获得的对象不能直接修改状态
+package main
+func main() {
+type person struct {age int}
+m := map[string]person{"steve":{10}}
+m["steve"].age = 100  // 编译错误：cannot assign to m["steve"].age
+}
+
+2.通过查询map获得的对象是个拷贝，对此对象的修改不能影响原有对象的状态
+package main
+func main() {
+type person struct {age int}
+m := map[string]person {"steve":{10}}
+p := m["steve"]
+p.age = 100 // 没有改变map中对象的状态！
+println(p.age)
+println(m["steve"].age)
+}
+输出：
+100
+10
+解决方法：
+1)map中存储指针而不是结构体
+package main
+func main() {
+type person struct {age int}
+m := map[string]*person{"steve":{10}}
+p := m["steve"]
+p.age = 100
+println(p.age)
+println(m["steve"].age)
+}
+输出：
+100
+100
+2)修改了对象状态以后重新加到map里
+
+
+import "fmt"
+type ErrLogin int
+func (n ErrLogin) Error() string {
+return fmt.Sprintf("failed to login(%x)", n)
+}
+func (n ErrLogin) Value() int {
+return int(n)
+}
+然后就死循环了。。。
+死循环的原因是，Sprintf是会通过接口查询知道n是一个接口类型，所以就会调用n的Error函数，但这个fmt.Sprintf本身就是在Error函数里调用的，所以就构成循环调用了。j
+
+
+
+以上代码有没有什么问题？如果看出问题，OK，以下的不用再看了；没看出问题的请继续。
+
+我们把以下代码用data race detector试一下，看看有什么结果：
+steve@stevepc:~/play$ go build -race race.go
+steve@stevepc:~/play$ ./race
+==================
+WARNING: DATA RACE
+Write by goroutine 5:
+  main.func·001()
+      /home/steve/play/race.go:16 +0x76
+  gosched0()
+      /usr/local/go/src/pkg/runtime/proc.c:1218 +0x9f
+
+Previous write by goroutine 4:
+  main.func·001()
+      /home/steve/play/race.go:18 +0x9f
+  gosched0()
+      /usr/local/go/src/pkg/runtime/proc.c:1218 +0x9f
+
+Goroutine 5 (running) created at:
+  main.main()
+      /home/steve/play/race.go:21 +0x1aa
+  runtime.main()
+      /usr/local/go/src/pkg/runtime/proc.c:182 +0x91
+
+Goroutine 4 (finished) created at:
+  main.main()
+      /home/steve/play/race.go:21 +0x1aa
+  runtime.main()
+      /usr/local/go/src/pkg/runtime/proc.c:182 +0x91
+
+==================
+Found 1 data race(s)
+
+我们看到data race detector有报告data race，也就是多个goroutine同时访问同一个数据。根据上面的报告，data race发生在16和18行，对应的代码是"count++"和"count--"。即同时有一个goroutine在执行"count++"而另一个goroutine在执行"count--"。
+这怎么可能呢？ch的长度明明是1，怎么可能两个goroutine同时去访问count呢？
