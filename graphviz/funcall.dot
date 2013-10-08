@@ -1,0 +1,10 @@
+digraph {
+	rankdir = LR
+	node[shape=record]
+	Memory[label="...|为ret2保留空位|为ret1保留空位|参数3|参数2|<fp>参数1|<sp>保存PC|f的栈|..."]
+	FP[label="FP"]
+	SP[label="SP"]
+	
+	FP->Memory:fp
+	SP->Memory:sp	
+}
