@@ -20,9 +20,10 @@
 下面详细介绍一些目录（可能分功能介绍）
 
 ## 一、api目录
-|– README
-|– go1.txt
-`– next.txt
+
+	|– README
+	|– go1.txt
+	`– next.txt
 
 通过阅读README知道，go1.txt可以通过go tool api命令生成。而通过go1.txt可以做成编辑器的api自动提示，比如Vim：VimForGo
 next.txt是一些将来可能加入的API
@@ -41,12 +42,12 @@ ar.h bio.h bootexec.h fmt.h libc.h mach.h plan9 u.h ureg_amd64.h ureg_arm.h ureg
 1）u.h
 根据Rob Pike在How to Use the Plan 9 C Compiler上的介绍以及文件的源码，知道u.h文件定义了一些依赖架构（architecture-dependent）的类型（这样使得该类型独立于架构，不过依赖于编译器），如用于setjmp系统调用的jmp_buf，以及类型int8、uint8等。
 
-该文件直接来源于plan9。地址：http://code.swtch.com/plan9port/src/tip/include/u.h。所有plan9 C程序必须在开始出包含该头文件（因为其他文件引用了该文件中的类型定义）
+该文件直接来源于plan9。地址：[http://code.swtch.com/plan9port/src/tip/include/u.h](http://code.swtch.com/plan9port/src/tip/include/u.h)。所有plan9 C程序必须在开始出包含该头文件（因为其他文件引用了该文件中的类型定义）
 
 2）ureg.h
 包括：ureg_amd64.h ureg_arm.h ureg_x86.h
 
-三种架构的定义。该文件来源于Inferno操作系统，相应的源码分别是：http://code.google.com/p/inferno-os/source/browse/utils/libmach/ureg5/6/8.h。
+三种架构的定义。该文件来源于Inferno操作系统，相应的源码分别是：[http://code.google.com/p/inferno-os/source/browse/utils/libmach/ureg5/6/8.h](http://code.google.com/p/inferno-os/source/browse/utils/libmach/ureg5/6/8.h)。
 
 该文件定义了一个类型（struct）：Ureg。定义了在系统栈上寄存器的布局
 
@@ -83,7 +84,7 @@ ar.h bio.h bootexec.h fmt.h libc.h mach.h plan9 u.h ureg_amd64.h ureg_arm.h ureg
 3）libc.h/utf.h/fmt.h
 在严格的标准C中，头文件按相关功能分组在一个单独文件中：一个头文件用于字符串处理，一个头文件用于内存管理，一个头文件用于I/O处理，没有头文件是用于系统调用的。plan9采用了不同的方式，一个C库由strings函数、内存操作函数、一些格式化IO程序，加上所有和这些相关的系统调用。为了使用这些功能，需要包含libc.h头文件。该文件从Inferno和Plan9中提取出来的。
 
-Inferno：http://code.google.com/p/inferno-os/source/browse/include/kern.h
+Inferno：http://code.google.com/p/inferno-os/source/browse/include/kern.h  
 Plan 9：http://code.swtch.com/plan9port/src/tip/include/libc.h
 
 该文件开头有几行注释：
@@ -227,6 +228,7 @@ go tool 工具名 xxx
 GOROOT/api中的go1.txt就可以通过这个工具生产
 
 3）cgo 允许通过调用C代码创建Go包
+
 4）fix 找到用旧API写的Go程序，然后用新API重写他们。
 这个可用于Go升级了，处理用之前版本Go写的应用程序。
 
