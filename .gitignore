@@ -1,4 +1,5 @@
 *~
+ebook/_book
 go/pkg/*
 go/bin/*
 go/test/bench/shootout/*
