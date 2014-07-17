@@ -1,0 +1,9 @@
+digraph G {
+Grunnable->Grunning;
+Grunning->Gwaiting;
+Grunning->Gdead;
+Grunning->Gsyscall;
+Gsyscall->Grunning;
+Gsyscall->Grunnable;
+Gwaiting->Grunnable;
+}
