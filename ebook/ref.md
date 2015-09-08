@@ -16,3 +16,4 @@
  12. [Go 1.2 Runtime Symbol Information](https://docs.google.com/document/d/1lyPIbmsYbXnpNj57a261hgOYVpNRcgydurVQIyZOz_o/pub)
  13. [goroutine与调度器](http://www.bigendian123.com/)
  14. [Closures in Go](http://derkthedaring.com/closures-in-go)
+ 15. [Golang Internals, Part 4: Object Files and Function Metadata](http://blog.altoros.com/golang-part-4-object-files-and-function-metadata.html)
