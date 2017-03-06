@@ -17,9 +17,6 @@
 
 捐款地址： [https://me.alipay.com/astaxie](https://me.alipay.com/astaxie)
 
-## 交流
-欢迎大家加入QQ群：259316004 《Go Web编程》专用交流群 我在里面潜水
-
 ## 致谢
 先留空
 
