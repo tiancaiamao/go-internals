@@ -5,17 +5,11 @@
 
 这本书目前我放在Github上，时间有限、能力有限，所以希望更多的朋友参与到这个开源项目中来。
 
-# 参与到本项目
+## 参与到本项目
 
 如果对某些章节很有兴趣，可以写作相应章节的内容并pull request给我。如果觉得有哪些相关的内容缺失，欢迎提出。如果发现书中内容有错误或者疏漏，欢迎指正。
 
 不管任何形式的参与都是非常受欢迎的。
-
-# 通过捐款支持谢大的书
-
-本书使用的[astaxie](https://github.com/astaxie/build-web-application-with-golang)的模板。如果你喜欢这本《深入解析Go》的话， 可以给他捐款， 支持他继续为Go语言，为开源事业做出贡献。
-
-捐款地址： [https://me.alipay.com/astaxie](https://me.alipay.com/astaxie)
 
 ## 致谢
 先留空
